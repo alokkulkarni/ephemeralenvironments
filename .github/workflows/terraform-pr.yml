@@ -1,0 +1,86 @@
+name: Terraform PR Environment
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Create environments directory
+        id: env_dir
+        run: |
+          PROJECT_NAME=$(grep -oP '(?<=project_name\s*=\s*")([^"]*)' aws/terraform.tfvars.example || echo "defaultProject")
+          ORG_NAME=$(grep -oP '(?<=org_name\s*=\s*")([^"]*)' aws/terraform.tfvars.example || echo "defaultOrg")
+          SQUAD_NAME=$(grep -oP '(?<=squad_name\s*=\s*")([^"]*)' aws/terraform.tfvars.example || echo "defaultSquad")
+          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+          ENV_DIR="environments/${PROJECT_NAME}-${ORG_NAME}-${SQUAD_NAME}-${TIMESTAMP}"
+          mkdir -p "$ENV_DIR"
+          echo "env_dir=$ENV_DIR" >> $GITHUB_OUTPUT
+
+      - name: Copy tfvars file
+        run: |
+          if [ -f aws/terraform.tfvars.example ]; then
+            cp aws/terraform.tfvars.example "${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars"
+          fi
+
+      - name: Terraform Init
+        working-directory: aws
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ steps.env_dir.outputs.env_dir }}/terraform.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            | tee "../${{ steps.env_dir.outputs.env_dir }}/init.log"
+
+      - name: Terraform Plan
+        working-directory: aws
+        run: |
+          terraform plan \
+            -var-file="../${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars" \
+            -out="../${{ steps.env_dir.outputs.env_dir }}/plan.out" \
+            | tee "../${{ steps.env_dir.outputs.env_dir }}/plan.log"
+
+      - name: Terraform Apply
+        if: github.event.pull_request.merged == true
+        working-directory: aws
+        run: |
+          terraform apply \
+            -auto-approve \
+            -var-file="../${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars" \
+            | tee "../${{ steps.env_dir.outputs.env_dir }}/apply.log"
+
+      - name: Upload environment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-${{ github.head_ref }}
+          path: ${{ steps.env_dir.outputs.env_dir }}
+
+      - name: Commit environment folder
+        if: github.event.pull_request.merged == true
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Add environment folder for ${{ github.head_ref }}"
+          file_pattern: ${{ steps.env_dir.outputs.env_dir }}
+          branch: ${{ github.head_ref }} 
