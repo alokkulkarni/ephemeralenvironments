@@ -1,4 +1,7 @@
-name: Terraform PR Environment
+# This workflow handles both validation and deployment of Terraform environments
+# It validates tfvars on PR creation/update and deploys when PR is merged
+
+name: terraform-environment-workflow
 
 on:
   pull_request:
@@ -6,22 +9,109 @@ on:
       - main
       - master
       - develop
+    paths:
+      - 'aws/terraform.tfvars'
 
 jobs:
-  terraform:
+  validate-and-deploy:
+    name: Validate and Deploy Environment
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     env:
       TF_IN_AUTOMATION: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
+      - name: Validate tfvars file
+        id: validate
+        run: |
+          # Check if tfvars file exists
+          if [ ! -f aws/terraform.tfvars ]; then
+            echo "Error: terraform.tfvars file not found"
+            exit 1
+          fi
+
+          # Validate required variables
+          required_vars=(
+            "environment"
+            "aws_region"
+            "project_name"
+            "org_name"
+            "squad_name"
+            "enable_rds"
+            "enable_dynamodb"
+            "enable_s3"
+            "enable_elasticache"
+          )
+
+          for var in "${required_vars[@]}"; do
+            if ! grep -q "^$var" aws/terraform.tfvars; then
+              echo "Error: Required variable '$var' not found in terraform.tfvars"
+              exit 1
+            fi
+          done
+
+          # Validate environment value
+          if ! grep -q 'environment = "dev"\|environment = "staging"\|environment = "prod"' aws/terraform.tfvars; then
+            echo "Error: Invalid environment value in terraform.tfvars"
+            exit 1
+          fi
+
+          # Validate AWS region
+          if ! grep -q 'aws_region = "us-east-1"\|aws_region = "us-west-2"\|aws_region = "eu-west-1"\|aws_region = "ap-southeast-1"' aws/terraform.tfvars; then
+            echo "Error: Invalid AWS region in terraform.tfvars"
+            exit 1
+          fi
+
+          # Read project information for later use
+          PROJECT_NAME=$(grep -oP '(?<=project_name\s*=\s*")([^"]*)' aws/terraform.tfvars)
+          ORG_NAME=$(grep -oP '(?<=org_name\s*=\s*")([^"]*)' aws/terraform.tfvars)
+          SQUAD_NAME=$(grep -oP '(?<=squad_name\s*=\s*")([^"]*)' aws/terraform.tfvars)
+          ENVIRONMENT=$(grep -oP '(?<=environment\s*=\s*")([^"]*)' aws/terraform.tfvars)
+          
+          echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
+          echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
+          echo "squad_name=$SQUAD_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+      - name: Comment PR with Validation Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const tfvars = fs.readFileSync('aws/terraform.tfvars', 'utf8');
+            
+            const comment = `## Environment Configuration Validation ✅
+            
+            The terraform.tfvars file has been validated and contains all required variables:
+            
+            \`\`\`hcl
+            ${tfvars}
+            \`\`\`
+            
+            ${context.eventName === 'pull_request' ? 'The environment will be created once this PR is merged.' : 'Creating environment...'}`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
       - name: Configure AWS credentials
+        if: github.event.pull_request.merged == true
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -29,23 +119,21 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Create environments directory
+        if: github.event.pull_request.merged == true
         id: env_dir
         run: |
-          PROJECT_NAME=$(grep -oP '(?<=project_name\s*=\s*")([^"]*)' aws/terraform.tfvars.example || echo "defaultProject")
-          ORG_NAME=$(grep -oP '(?<=org_name\s*=\s*")([^"]*)' aws/terraform.tfvars.example || echo "defaultOrg")
-          SQUAD_NAME=$(grep -oP '(?<=squad_name\s*=\s*")([^"]*)' aws/terraform.tfvars.example || echo "defaultSquad")
           TIMESTAMP=$(date +"%Y%m%d%H%M%S")
-          ENV_DIR="environments/${PROJECT_NAME}-${ORG_NAME}-${SQUAD_NAME}-${TIMESTAMP}"
+          ENV_DIR="environments/${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.org_name }}-${{ steps.validate.outputs.squad_name }}-${{ steps.validate.outputs.environment }}-${TIMESTAMP}"
           mkdir -p "$ENV_DIR"
           echo "env_dir=$ENV_DIR" >> $GITHUB_OUTPUT
 
-      - name: Copy tfvars file
+      - name: Copy tfvars from PR
+        if: github.event.pull_request.merged == true
         run: |
-          if [ -f aws/terraform.tfvars.example ]; then
-            cp aws/terraform.tfvars.example "${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars"
-          fi
+          cp aws/terraform.tfvars "${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars"
 
       - name: Terraform Init
+        if: github.event.pull_request.merged == true
         working-directory: aws
         run: |
           terraform init \
@@ -55,6 +143,7 @@ jobs:
             | tee "../${{ steps.env_dir.outputs.env_dir }}/init.log"
 
       - name: Terraform Plan
+        if: github.event.pull_request.merged == true
         working-directory: aws
         run: |
           terraform plan \
@@ -72,6 +161,7 @@ jobs:
             | tee "../${{ steps.env_dir.outputs.env_dir }}/apply.log"
 
       - name: Upload environment artifacts
+        if: github.event.pull_request.merged == true
         uses: actions/upload-artifact@v4
         with:
           name: environment-${{ github.head_ref }}
@@ -83,4 +173,29 @@ jobs:
         with:
           commit_message: "Add environment folder for ${{ github.head_ref }}"
           file_pattern: ${{ steps.env_dir.outputs.env_dir }}
-          branch: ${{ github.head_ref }} 
+          branch: ${{ github.head_ref }}
+
+      - name: Comment PR with Environment Details
+        if: github.event.pull_request.merged == true
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const comment = `## Environment Created Successfully 🎉
+            
+            The environment has been created with the following details:
+            
+            - Project: ${{ steps.validate.outputs.project_name }}
+            - Organization: ${{ steps.validate.outputs.org_name }}
+            - Squad: ${{ steps.validate.outputs.squad_name }}
+            - Environment: ${{ steps.validate.outputs.environment }}
+            - Environment Directory: ${{ steps.env_dir.outputs.env_dir }}
+            
+            All environment artifacts and logs are available in the workflow artifacts.`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            }); 

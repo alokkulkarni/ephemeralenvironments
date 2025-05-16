@@ -1,0 +1,70 @@
+# Terraform files
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+*.tfplan
+.terragrunt-cache
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Node.js files for the Backstage plugin
+node_modules/
+dist/
+dist-types/
+coverage/
+.env
+.env.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Package files
+*.tgz
+*.tar.gz
+*.zip
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.classpath
+.settings/
+
+# Operating System Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Backstage specific
+.yarn/
+.backstage-module-cache/
+.backstage/
+
+# Temporary files
+tmp/
+temp/
+.temp/
+.tmp/
+
+# Local development
+*.local
+local/
+
+# Testing
+.coverage/
+.nyc_output/
+
+# Build artifacts
+build/ 
