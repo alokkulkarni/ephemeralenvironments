@@ -158,3 +158,16 @@ variable "squad_name" {
   description = "Name of the squad/team"
   type        = string
 } 
+
+variable "lifetimedays" {
+  description = "Number of days before the environment is automatically destroyed"
+  type        = number
+  default     = 7
+}
+
+variable "duration" {
+  description = "Duration of the environment"
+  type        = number
+  default     = 7
+}
+
