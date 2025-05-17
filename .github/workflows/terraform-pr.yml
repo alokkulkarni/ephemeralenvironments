@@ -62,22 +62,22 @@ jobs:
           done
 
           # Validate environment value
-          if ! grep -q 'environment = "dev"\|environment = "staging"\|environment = "prod"' aws/terraform.tfvars; then
+          if ! grep -qP 'environment\s*=\s*"(dev|staging|prod)"' aws/terraform.tfvars; then
             echo "Error: Invalid environment value in terraform.tfvars"
             exit 1
           fi
 
           # Validate AWS region
-          if ! grep -q 'aws_region = "us-east-1"\|aws_region = "us-west-2"\|aws_region = "eu-west-1"\|aws_region = "eu-west-2"\|aws_region = "ap-southeast-1"' aws/terraform.tfvars; then
+          if ! grep -qP 'aws_region\s*=\s*"(us-east-1|us-west-2|eu-west-1|eu-west-2|ap-southeast-1)"' aws/terraform.tfvars; then
             echo "Error: Invalid AWS region in terraform.tfvars"
             exit 1
           fi
 
           # Read project information for later use
-          PROJECT_NAME=$(grep -oP '(?<=project_name\s*=\s*")([^"]*)' aws/terraform.tfvars)
-          ORG_NAME=$(grep -oP '(?<=org_name\s*=\s*")([^"]*)' aws/terraform.tfvars)
-          SQUAD_NAME=$(grep -oP '(?<=squad_name\s*=\s*")([^"]*)' aws/terraform.tfvars)
-          ENVIRONMENT=$(grep -oP '(?<=environment\s*=\s*")([^"]*)' aws/terraform.tfvars)
+          PROJECT_NAME=$(grep -Po 'project_name\s*=\s*"\K[^"]*' aws/terraform.tfvars)
+          ORG_NAME=$(grep -Po 'org_name\s*=\s*"\K[^"]*' aws/terraform.tfvars)
+          SQUAD_NAME=$(grep -Po 'squad_name\s*=\s*"\K[^"]*' aws/terraform.tfvars)
+          ENVIRONMENT=$(grep -Po 'environment\s*=\s*"\K[^"]*' aws/terraform.tfvars)
           
           echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
           echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
