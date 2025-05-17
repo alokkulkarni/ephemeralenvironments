@@ -1,0 +1,20 @@
+
+[0m[1mInitializing the backend...[0m
+[0m[32m
+Successfully configured the backend "local"! Terraform will automatically
+use this backend unless the backend configuration changes.[0m
+[0m[1mInitializing modules...[0m
+- alb in modules/alb
+- dynamodb in modules/dynamodb
+- eks in modules/eks
+- elasticache in modules/elasticache
+- iam in modules/iam
+- rds in modules/rds
+- s3 in modules/s3
+- vpc in modules/vpc
+
+[0m[1mInitializing provider plugins...[0m
+- Finding hashicorp/aws versions matching "~> 5.0"...
+- Finding hashicorp/kubernetes versions matching "~> 2.23"...
+- Finding hashicorp/helm versions matching "~> 2.11"...
+::error::Terraform exited with code 1.
