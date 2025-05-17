@@ -1,0 +1,37 @@
+# Terraform-specific settings for the aws directory
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.*.backup
+.terraform.tfstate.lock.info
+terraform.tfvars
+!terraform.tfvars.example
+*.auto.tfvars
+*.auto.tfvars.json
+*.log
+*.bak
+*.cache
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Local environment variables files
+.env
+.env.*
+
+# Exclude all .tfplan files
+*.tfplan
+*.tfplan.*
+
+# Exclude override files as they're usually used to override resources locally
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Exclude local backend configurations which often contain sensitive data
+backend.tf.local
+
+# Include tfvars files that are specifically tracked in version control
+!example.tfvars 
