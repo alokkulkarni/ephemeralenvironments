@@ -1,7 +1,7 @@
 # Organization and Project Information
-project_name = "ephemeral-environments"
-org_name     = "my-organization"
-squad_name   = "platform-team"
+project_name = "TestProject"
+org_name     = "productsandchannels"
+squad_name   = "TestTeam"
 
 environment = "dev"
 aws_region  = "eu-west-2"
