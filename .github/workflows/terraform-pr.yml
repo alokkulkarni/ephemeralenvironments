@@ -210,6 +210,28 @@ jobs:
           file_pattern: ${{ steps.env_dir.outputs.env_dir }}
           branch: main
 
+      - name: Set success flag
+        if: success()
+        run: echo "success=true" >> $GITHUB_OUTPUT
+
+      - name: Set environment details
+        if: success()
+        run: |
+          echo "project_name=${{ steps.validate.outputs.project_name }}" >> $GITHUB_OUTPUT
+          echo "org_name=${{ steps.validate.outputs.org_name }}" >> $GITHUB_OUTPUT
+          echo "squad_name=${{ steps.validate.outputs.squad_name }}" >> $GITHUB_OUTPUT
+          echo "environment=${{ steps.validate.outputs.environment }}" >> $GITHUB_OUTPUT
+          echo "env_dir=${{ steps.env_dir.outputs.env_dir }}" >> $GITHUB_OUTPUT
+
+  create-issue:
+    name: Create Environment Issue
+    needs: validate-and-deploy
+    if: needs.validate-and-deploy.outputs.success == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
       - name: Create issue with Environment Details
         uses: actions/github-script@v7
         with:
@@ -218,16 +240,16 @@ jobs:
             const result = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Environment Created: ${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.environment }}`,
+              title: `Environment Created: ${{ needs.validate-and-deploy.outputs.project_name }}-${{ needs.validate-and-deploy.outputs.environment }}`,
               body: `## Environment Created Successfully 🎉
               
               The environment has been created with the following details:
               
-              - Project: ${{ steps.validate.outputs.project_name }}
-              - Organization: ${{ steps.validate.outputs.org_name }}
-              - Squad: ${{ steps.validate.outputs.squad_name }}
-              - Environment: ${{ steps.validate.outputs.environment }}
-              - Environment Directory: ${{ steps.env_dir.outputs.env_dir }}
+              - Project: ${{ needs.validate-and-deploy.outputs.project_name }}
+              - Organization: ${{ needs.validate-and-deploy.outputs.org_name }}
+              - Squad: ${{ needs.validate-and-deploy.outputs.squad_name }}
+              - Environment: ${{ needs.validate-and-deploy.outputs.environment }}
+              - Environment Directory: ${{ needs.validate-and-deploy.outputs.env_dir }}
               
               All environment artifacts and logs are available in the workflow artifacts.
               
@@ -244,6 +266,6 @@ jobs:
               
               The environment has been successfully created.
               
-              For details, see issue #${result.data.number}: [Environment Created: ${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.environment }}](${result.data.html_url})
+              For details, see issue #${result.data.number}: [Environment Created: ${{ needs.validate-and-deploy.outputs.project_name }}-${{ needs.validate-and-deploy.outputs.environment }}](${result.data.html_url})
               `
             }); 
