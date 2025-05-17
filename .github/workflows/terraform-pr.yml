@@ -117,6 +117,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Setup Terraform plugin cache
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          echo "plugin_cache_dir = \"$HOME/.terraform.d/plugin-cache\"" > ~/.terraformrc
+          echo "TF_PLUGIN_CACHE_DIR=$HOME/.terraform.d/plugin-cache" >> $GITHUB_ENV
+
       - name: Cache Terraform plugins and modules
         uses: actions/cache@v3
         with:
@@ -151,17 +157,22 @@ jobs:
 
       - name: Terraform Init
         working-directory: aws
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
         run: |
-          mkdir -p ~/.terraform.d/plugin-cache
-          export TF_PLUGIN_CACHE_DIR=~/.terraform.d/plugin-cache
+          # First init without plugin-dir to download providers
+          terraform init -upgrade
+          
+          # Then init with plugin-dir to use cached providers
           terraform init \
-            -plugin-dir=~/.terraform.d/plugin-cache \
+            -plugin-dir="${{ env.TF_PLUGIN_CACHE_DIR }}" \
             | tee "../${{ steps.env_dir.outputs.env_dir }}/init.log"
 
       - name: Terraform Plan
         working-directory: aws
         env:
           TF_DATA_DIR: "../${{ steps.env_dir.outputs.env_dir }}/.terraform"
+          TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
         run: |
           terraform plan \
             -var-file="../${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars" \
@@ -175,6 +186,7 @@ jobs:
         working-directory: aws
         env:
           TF_DATA_DIR: "../${{ steps.env_dir.outputs.env_dir }}/.terraform"
+          TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
         run: |
           terraform apply \
             -auto-approve \
