@@ -68,7 +68,7 @@ jobs:
           fi
 
           # Validate AWS region
-          if ! grep -q 'aws_region = "us-east-1"\|aws_region = "us-west-2"\|aws_region = "eu-west-1"\|aws_region = "ap-southeast-1"' aws/terraform.tfvars; then
+          if ! grep -q 'aws_region = "us-east-1"\|aws_region = "us-west-2"\|aws_region = "eu-west-1"\|aws_region = "eu-west-2"\|aws_region = "ap-southeast-1"' aws/terraform.tfvars; then
             echo "Error: Invalid AWS region in terraform.tfvars"
             exit 1
           fi
