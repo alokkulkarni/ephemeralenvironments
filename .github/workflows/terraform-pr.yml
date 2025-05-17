@@ -117,6 +117,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Cache Terraform plugins and modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            aws/.terraform
+            aws/.terraform.lock.hcl
+            ~/.terraform.d/plugin-cache
+          key: ${{ runner.os }}-terraform-${{ hashFiles('aws/**/*.tf', 'aws/**/*.tfvars') }}
+          restore-keys: |
+            ${{ runner.os }}-terraform-
+
       - name: Create environments directory
         id: env_dir
         run: |
@@ -129,29 +140,46 @@ jobs:
         run: |
           cp aws/terraform.tfvars "${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars"
 
+      - name: Create local backend config
+        working-directory: aws
+        run: |
+          cat > backend.tf <<EOF
+          terraform {
+            backend "local" {}
+          }
+          EOF
+
       - name: Terraform Init
         working-directory: aws
         run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          export TF_PLUGIN_CACHE_DIR=~/.terraform.d/plugin-cache
           terraform init \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ steps.env_dir.outputs.env_dir }}/terraform.tfstate" \
-            -backend-config="region=${{ secrets.AWS_REGION }}" \
+            -plugin-dir=~/.terraform.d/plugin-cache \
             | tee "../${{ steps.env_dir.outputs.env_dir }}/init.log"
 
       - name: Terraform Plan
         working-directory: aws
+        env:
+          TF_DATA_DIR: "../${{ steps.env_dir.outputs.env_dir }}/.terraform"
         run: |
           terraform plan \
             -var-file="../${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars" \
             -out="../${{ steps.env_dir.outputs.env_dir }}/plan.out" \
+            -parallelism=10 \
+            -refresh=false \
+            -state="../${{ steps.env_dir.outputs.env_dir }}/terraform.tfstate" \
             | tee "../${{ steps.env_dir.outputs.env_dir }}/plan.log"
 
       - name: Terraform Apply
         working-directory: aws
+        env:
+          TF_DATA_DIR: "../${{ steps.env_dir.outputs.env_dir }}/.terraform"
         run: |
           terraform apply \
             -auto-approve \
             -var-file="../${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars" \
+            -state="../${{ steps.env_dir.outputs.env_dir }}/terraform.tfstate" \
             | tee "../${{ steps.env_dir.outputs.env_dir }}/apply.log"
 
       - name: Upload environment artifacts
