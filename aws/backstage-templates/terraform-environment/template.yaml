@@ -1,0 +1,179 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: terraform-environment
+  title: Create Terraform Environment
+  description: Create a new ephemeral environment using Terraform
+  tags:
+    - terraform
+    - aws
+    - environment
+  type: service
+
+spec:
+  owner: ak
+  system: ak-idp
+  type: service
+  parameters:
+    - title: Project Information
+      required:
+        - projectName
+        - orgName
+        - squadName
+      properties:
+        projectName:
+          title: Project Name
+          type: string
+          description: Name of the project
+          pattern: '^[A-Za-z0-9-]+$'
+          ui:autofocus: true
+        orgName:
+          title: Organization Name
+          type: string
+          description: Name of the organization
+          pattern: '^[a-z0-9-]+$'
+        squadName:
+          title: Squad Name
+          type: string
+          description: Name of the squad
+          pattern: '^[A-Za-z0-9-]+$'
+
+    - title: Environment Configuration
+      required:
+        - environment
+        - awsRegion
+        - lifetimeDays
+        - autoDestroy
+      properties:
+        environment:
+          title: Environment
+          type: string
+          description: Environment name
+          enum:
+            - dev
+            - staging
+            - prod
+        awsRegion:
+          title: AWS Region
+          type: string
+          description: AWS region to deploy the infrastructure
+          enum:
+            - us-east-1
+            - us-east-2
+            - us-west-1
+            - us-west-2
+            - eu-west-1
+            - eu-west-2
+            - ap-southeast-1
+            - ap-southeast-2
+        enableRds:
+          title: Enable RDS
+          type: boolean
+          description: Enable RDS PostgreSQL database
+          default: false
+        enableDynamodb:
+          title: Enable DynamoDB
+          type: boolean
+          description: Enable DynamoDB tables
+          default: false
+        enableS3:
+          title: Enable S3
+          type: boolean
+          description: Enable S3 buckets
+          default: false
+        enableElasticache:
+          title: Enable ElastiCache
+          type: boolean
+          description: Enable ElastiCache Redis
+          default: false
+        lifetimeDays:
+          title: Environment Lifetime
+          type: integer
+          description: Number of days before the environment is automatically destroyed
+          minimum: 1
+          maximum: 30
+          default: 7
+        autoDestroy:
+          title: Auto Destroy
+          type: boolean
+          description: Automatically destroy the environment after the lifetime expires
+          default: true
+
+  steps:
+    - id: fetchRepository
+      name: Fetch repository
+      action: fetch:plain
+      input:
+        url: https://github.com/alokkulkarni/ephemeralenvironments
+
+    - id: fetchTerraformTemplate
+      name: Fetch terraform.tfvars template
+      action: fetch:template
+      input:
+        url: ./skeleton/aws/terraform.tfvars
+        values:
+          environment: ${{ parameters.environment }}
+          awsRegion: ${{ parameters.awsRegion }}
+          projectName: ${{ parameters.projectName }}
+          orgName: ${{ parameters.orgName }}
+          squadName: ${{ parameters.squadName }}
+          enableRds: ${{ parameters.enableRds | default(false) }}
+          enableDynamodb: ${{ parameters.enableDynamodb | default(false) }}
+          enableS3: ${{ parameters.enableS3 | default(false) }}
+          enableElasticache: ${{ parameters.enableElasticache | default(false) }}
+          lifetimeDays: ${{ parameters.lifetimeDays }}
+          autoDestroy: ${{ parameters.autoDestroy }}
+          duration: ${{ parameters.lifetimeDays }}
+    
+    - id: create-pr
+      name: Create Pull Request with terraform.tfvars
+      action: publish:github:pull-request
+      input:
+        repoUrl: github.com?owner=alokkulkarni&repo=ephemeralenvironments
+        title: "Create environment for ${{ parameters.projectName }}"
+        branchName: "env/${{ parameters.projectName }}-${{ parameters.orgName }}-${{ parameters.squadName }}"
+        description: |
+          This PR creates a new environment for:
+          - Project: ${{ parameters.projectName }}
+          - Organization: ${{ parameters.orgName }}
+          - Squad: ${{ parameters.squadName }}
+          - Environment: ${{ parameters.environment }}
+          - Lifetime: ${{ parameters.lifetimeDays }} days
+          - Auto Destroy: ${{ parameters.autoDestroy }}
+        targetPath: ./
+        commitMessage: "Create environment configuration for ${{ parameters.projectName }}"
+        sourcePath: ./
+        draft: false
+        files:
+          - path: aws/terraform.tfvars
+            content: |
+              # Environment Configuration
+              environment = "${{ parameters.environment }}"
+              aws_region = "${{ parameters.awsRegion }}"
+
+              # Project Information
+              project_name = "${{ parameters.projectName }}"
+              org_name = "${{ parameters.orgName }}"
+              squad_name = "${{ parameters.squadName }}"
+
+              # Optional Components
+              enable_rds = "${{ parameters.enableRds }}"
+              enable_dynamodb = "${{ parameters.enableDynamodb }}"
+              enable_s3 = "${{ parameters.enableS3 }}"
+              enable_elasticache = "${{ parameters.enableElasticache }}"
+
+              # Environment life cycle duration
+              lifetimeDays = "${{ parameters.lifetimeDays }}"
+              duration = "${{ parameters.lifetimeDays }}"
+
+              # VPC Configuration
+              vpc_cidr = "10.0.0.0/16"
+              availability_zones = ["${{ parameters.awsRegion }}a", "${{ parameters.awsRegion }}b", "${{ parameters.awsRegion }}c"]
+
+              # EKS Configuration
+              cluster_name = "${{ parameters.projectName }}-${{ parameters.environment }}"
+              cluster_version = "1.32"
+              node_instance_types = ["t3.medium"]
+              desired_size = 2
+              max_size = 4
+              min_size = 1

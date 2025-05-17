@@ -1,0 +1,117 @@
+name: Cleanup Environments
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  cleanup:
+    name: Cleanup Expired Environments
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get Expired Environments
+        id: expired
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['environment', 'status:active'],
+              state: 'open',
+            });
+
+            const now = new Date();
+            const expiredEnvs = [];
+
+            for (const issue of issues.data) {
+              const metadata = JSON.parse(
+                issue.body.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}'
+              );
+
+              if (
+                metadata.lifecycle?.auto_destroy &&
+                new Date(metadata.lifecycle.destroy_after) < now
+              ) {
+                expiredEnvs.push({
+                  issueNumber: issue.number,
+                  name: issue.title.replace('[ENV] ', ''),
+                  destroyAfter: metadata.lifecycle.destroy_after,
+                });
+              }
+            }
+
+            if (expiredEnvs.length > 0) {
+              console.log('Found expired environments:', expiredEnvs);
+            } else {
+              console.log('No expired environments found');
+            }
+
+            return expiredEnvs;
+
+      - name: Trigger Environment Destruction
+        if: steps.expired.outputs.length > 0
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const expiredEnvs = ${{ toJSON(steps.expired.outputs) }};
+
+            for (const env of expiredEnvs) {
+              console.log(`Triggering destruction for environment ${env.name} (Issue #${env.issueNumber})`);
+
+              // Add expiration comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: env.issueNumber,
+                body: `## Environment Expired\n\nThis environment has reached its expiration date (${env.destroyAfter}) and will be automatically destroyed.`,
+              });
+
+              // Trigger destruction workflow
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'destroy-environment.yml',
+                ref: 'main',
+                inputs: {
+                  issue_number: env.issueNumber.toString(),
+                },
+              });
+
+              // Add a small delay between triggers
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+
+      - name: Create Cleanup Summary
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const expiredEnvs = ${{ toJSON(steps.expired.outputs) }};
+            
+            if (expiredEnvs.length > 0) {
+              const summary = `## Environment Cleanup Summary\n\n` +
+                `Found ${expiredEnvs.length} expired environment(s):\n\n` +
+                expiredEnvs.map(env => 
+                  `- ${env.name} (Issue #${env.issueNumber}) - Expired on ${env.destroyAfter}`
+                ).join('\n') +
+                `\n\nDestruction workflows have been triggered for these environments.`;
+              
+              // Create a new issue for the cleanup summary
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Environment Cleanup - ${new Date().toISOString().split('T')[0]}`,
+                body: summary,
+                labels: ['cleanup', 'automated'],
+              });
+            } 
