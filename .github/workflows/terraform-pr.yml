@@ -564,12 +564,14 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             try {
+              // Get the issue
               const issue = await github.rest.issues.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: ${{ needs.create-issue.outputs.issue_number }}
               });
               
+              // Create metadata for successful deployment
               const envDir = '${{ env.ENV_DIR }}';
               const metadata = {
                 environment: {
@@ -584,6 +586,7 @@ jobs:
                 }
               };
               
+              // Update the checklist and status in the body text
               let updatedBody = issue.data.body
                 .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
                 .replace('status: "creating"', 'status: "active"');
@@ -592,6 +595,7 @@ jobs:
               const jsonRegex = /```json\n[\s\S]*?\n```/;
               updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
               
+              // Update the issue with the new body and labels
               await github.rest.issues.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -618,6 +622,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             try {
+              // Get the issue
               const issue = await github.rest.issues.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -635,6 +640,7 @@ jobs:
                 console.error('Error parsing JSON metadata:', parseError);
               }
               
+              // Create updated metadata
               const updatedMetadata = {
                 environment: {
                   ...currentMetadata.environment,
@@ -643,6 +649,7 @@ jobs:
                 }
               };
               
+              // Update the status in the body text
               let updatedBody = issue.data.body
                 .replace('status: "creating"', 'status: "failed"');
               
@@ -650,6 +657,7 @@ jobs:
               const jsonRegex = /```json\n[\s\S]*?\n```/;
               updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(updatedMetadata, null, 2)}\n\`\`\``);
               
+              // Update the issue with the new body and labels
               await github.rest.issues.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -660,4 +668,4 @@ jobs:
             } catch (error) {
               console.error('Error updating issue on failure:', error);
               throw error;
-            } 
+            }
