@@ -1,7 +1,7 @@
 # Organization and Project Information
-project_name = "TestProject"
-org_name     = "TestOrg"
-squad_name   = "TestTeam"
+project_name = "TestProject22"
+org_name     = "TestOrg22"
+squad_name   = "TestTeam22"
 
 environment = "dev"
 aws_region  = "eu-west-2"
