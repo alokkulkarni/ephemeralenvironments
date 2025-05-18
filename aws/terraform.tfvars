@@ -1,6 +1,6 @@
 # Organization and Project Information
 project_name = "TestProject"
-org_name     = "TestOrg"
+org_name     = "TestOrg2"
 squad_name   = "TestTeam"
 
 environment = "dev"
