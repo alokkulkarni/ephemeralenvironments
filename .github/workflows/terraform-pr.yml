@@ -13,8 +13,110 @@ on:
       - 'aws/terraform.tfvars'
 
 jobs:
+  create-issue:
+    name: Create Environment Issue
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      issue_number: ${{ steps.create_issue.outputs.issue_number }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read tfvars file
+        id: tfvars
+        run: |
+          if [ ! -f aws/terraform.tfvars ]; then
+            echo "Error: terraform.tfvars file not found"
+            exit 1
+          fi
+          
+          # Read project information
+          PROJECT_NAME=$(grep -Po 'project_name\s*=\s*"\K[^"]*' aws/terraform.tfvars)
+          ORG_NAME=$(grep -Po 'org_name\s*=\s*"\K[^"]*' aws/terraform.tfvars)
+          SQUAD_NAME=$(grep -Po 'squad_name\s*=\s*"\K[^"]*' aws/terraform.tfvars)
+          ENVIRONMENT=$(grep -Po 'environment\s*=\s*"\K[^"]*' aws/terraform.tfvars)
+          
+          echo "project_name=$PROJECT_NAME" >> $GITHUB_OUTPUT
+          echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
+          echo "squad_name=$SQUAD_NAME" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+      - name: Create Environment Issue
+        id: create_issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[ENV] Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}`,
+              body: `## Environment Creation Started 🚀
+              
+              Creating a new environment with the following details:
+              
+              - Project: ${{ steps.tfvars.outputs.project_name }}
+              - Organization: ${{ steps.tfvars.outputs.org_name }}
+              - Squad: ${{ steps.tfvars.outputs.squad_name }}
+              - Environment: ${{ steps.tfvars.outputs.environment }}
+              - PR: #${context.issue.number}
+              
+              ### Status
+              - [ ] Validate tfvars file
+              - [ ] Create environment directory
+              - [ ] Initialize Terraform
+              - [ ] Plan infrastructure
+              - [ ] Apply infrastructure
+              - [ ] Upload artifacts
+              
+              ### Files
+              - \`terraform.tfvars\`: Environment variables (to be attached)
+              - \`plan.out\`: Terraform plan output (to be attached)
+              - \`logs/\`: Directory containing execution logs (to be attached)
+              
+              Created from PR #${context.issue.number}
+              
+              \`\`\`json
+              {
+                "environment": {
+                  "project": "${{ steps.tfvars.outputs.project_name }}",
+                  "organization": "${{ steps.tfvars.outputs.org_name }}",
+                  "squad": "${{ steps.tfvars.outputs.squad_name }}",
+                  "type": "${{ steps.tfvars.outputs.environment }}",
+                  "created_at": "${new Date().toISOString()}",
+                  "pr_number": ${context.issue.number},
+                  "status": "creating"
+                }
+              }
+              \`\`\`
+              `,
+              labels: ['environment', 'status:creating']
+            });
+            
+            // Add a comment to the PR with a link to the created issue
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Environment Creation Started 🚀
+              
+              An issue has been created to track the environment creation process.
+              
+              See issue #${issue.data.number}: [Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}](${issue.data.html_url})
+              `
+            });
+            
+            return issue.data.number;
+
   validate-and-deploy:
     name: Validate and Deploy Environment
+    needs: create-issue
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -31,7 +133,19 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: 1.7.0
+
+      - name: Update Issue Status - Validating
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: body => body.replace('- [ ] Validate tfvars file', '- [x] Validate tfvars file')
+            });
 
       - name: Validate tfvars file
         id: validate
@@ -84,6 +198,22 @@ jobs:
           echo "org_name=$ORG_NAME" >> $GITHUB_OUTPUT
           echo "squad_name=$SQUAD_NAME" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+          # Update issue with validation results
+          echo "validation_success=true" >> $GITHUB_OUTPUT
+
+      - name: Update Issue Status - Creating Directory
+        if: steps.validate.outputs.validation_success == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: body => body.replace('- [ ] Create environment directory', '- [x] Create environment directory')
+            });
 
       - name: Create environments directory
         id: env_dir
@@ -144,29 +274,40 @@ jobs:
           echo "Contents of environment directory:"
           ls -la "${{ env.ENV_DIR }}"
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          # Attach tfvars file to issue
+          echo "TFVARS_PATH=${{ env.ENV_DIR }}/terraform.tfvars" >> $GITHUB_ENV
 
-      - name: Setup Terraform plugin cache
-        run: |
-          mkdir -p ~/.terraform.d/plugin-cache
-          echo "plugin_cache_dir = \"$HOME/.terraform.d/plugin-cache\"" > ~/.terraformrc
-          echo "TF_PLUGIN_CACHE_DIR=$HOME/.terraform.d/plugin-cache" >> $GITHUB_ENV
-
-      - name: Cache Terraform plugins and modules
-        uses: actions/cache@v3
+      - name: Attach tfvars file to issue
+        uses: actions/github-script@v7
         with:
-          path: |
-            ${{ env.ENV_DIR }}/.terraform
-            ${{ env.ENV_DIR }}/.terraform.lock.hcl
-            ~/.terraform.d/plugin-cache
-          key: ${{ runner.os }}-terraform-${{ hashFiles('aws/**/*.tf', 'aws/**/*.tfvars') }}
-          restore-keys: |
-            ${{ runner.os }}-terraform-
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const tfvarsContent = fs.readFileSync(process.env.TFVARS_PATH, 'utf8');
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: `## Terraform Variables File
+              
+              \`\`\`hcl
+              ${tfvarsContent}
+              \`\`\`
+              `
+            });
+
+      - name: Update Issue Status - Initializing
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: body => body.replace('- [ ] Initialize Terraform', '- [x] Initialize Terraform')
+            });
 
       - name: Terraform Init
         working-directory: ${{ env.ENV_DIR }}
@@ -187,6 +328,41 @@ jobs:
             -reconfigure \
             -plugin-dir="${{ env.TF_PLUGIN_CACHE_DIR }}" \
             | tee -a logs/init.log
+
+          # Attach init logs to issue
+          echo "INIT_LOG_PATH=${{ env.ENV_DIR }}/logs/init.log" >> $GITHUB_ENV
+
+      - name: Attach init logs to issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const initLogContent = fs.readFileSync(process.env.INIT_LOG_PATH, 'utf8');
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: `## Terraform Initialization Logs
+              
+              \`\`\`
+              ${initLogContent}
+              \`\`\`
+              `
+            });
+
+      - name: Update Issue Status - Planning
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: body => body.replace('- [ ] Plan infrastructure', '- [x] Plan infrastructure')
+            });
 
       - name: Terraform Plan
         working-directory: ${{ env.ENV_DIR }}
@@ -218,6 +394,41 @@ jobs:
             exit 1
           fi
 
+          # Attach plan logs to issue
+          echo "PLAN_LOG_PATH=${{ env.ENV_DIR }}/logs/plan.log" >> $GITHUB_ENV
+
+      - name: Attach plan logs to issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planLogContent = fs.readFileSync(process.env.PLAN_LOG_PATH, 'utf8');
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: `## Terraform Plan Logs
+              
+              \`\`\`
+              ${planLogContent}
+              \`\`\`
+              `
+            });
+
+      - name: Update Issue Status - Applying
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: body => body.replace('- [ ] Apply infrastructure', '- [x] Apply infrastructure')
+            });
+
       - name: Terraform Apply
         working-directory: ${{ env.ENV_DIR }}
         env:
@@ -242,11 +453,62 @@ jobs:
             -var-file="./terraform.tfvars" \
             | tee logs/apply.log
 
-      - name: Set success flag
+          # Attach apply logs to issue
+          echo "APPLY_LOG_PATH=${{ env.ENV_DIR }}/logs/apply.log" >> $GITHUB_ENV
+
+      - name: Attach apply logs to issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const applyLogContent = fs.readFileSync(process.env.APPLY_LOG_PATH, 'utf8');
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: `## Terraform Apply Logs
+              
+              \`\`\`
+              ${applyLogContent}
+              \`\`\`
+              `
+            });
+
+      - name: Update Issue Status - Complete
         if: success()
-        run: |
-          echo "success=true" >> $GITHUB_OUTPUT
-          echo "env_dir=${{ env.ENV_DIR }}" >> $GITHUB_OUTPUT
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const envDir = '${{ env.ENV_DIR }}';
+            const metadata = {
+              environment: {
+                directory: envDir,
+                project: '${{ steps.validate.outputs.project_name }}',
+                organization: '${{ steps.validate.outputs.org_name }}',
+                squad: '${{ steps.validate.outputs.squad_name }}',
+                type: '${{ steps.validate.outputs.environment }}',
+                created_at: new Date().toISOString(),
+                pr_number: context.issue.number,
+                status: 'active'
+              }
+            };
+            
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: body => {
+                const updatedBody = body
+                  .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
+                  .replace('status: "creating"', 'status: "active"')
+                  .replace(/```json\n[\s\S]*?\n```/, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
+                return updatedBody;
+              },
+              labels: ['environment', 'status:active']
+            });
 
       - name: Upload environment artifacts
         uses: actions/upload-artifact@v4
@@ -255,83 +517,27 @@ jobs:
           path: ${{ env.ENV_DIR }}
           retention-days: 30
 
-      - name: Commit environment folder
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Add environment for ${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.environment }}"
-          file_pattern: ${{ env.ENV_DIR }}
-          branch: main
-
-  create-issue:
-    name: Create Environment Issue
-    needs: validate-and-deploy
-    if: needs.validate-and-deploy.outputs.success == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-      pull-requests: write
-    steps:
-      - name: Create issue with Environment Details
+      - name: Update Issue Status - Failed
+        if: failure()
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const envDir = '${{ needs.validate-and-deploy.outputs.env_dir }}';
-            const result = await github.rest.issues.create({
+            await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Environment Created: ${{ needs.validate-and-deploy.outputs.project_name }}-${{ needs.validate-and-deploy.outputs.environment }}`,
-              body: `## Environment Created Successfully 🎉
-              
-              The environment has been created with the following details:
-              
-              - Project: ${{ needs.validate-and-deploy.outputs.project_name }}
-              - Organization: ${{ needs.validate-and-deploy.outputs.org_name }}
-              - Squad: ${{ needs.validate-and-deploy.outputs.squad_name }}
-              - Environment: ${{ needs.validate-and-deploy.outputs.environment }}
-              - Environment Directory: \`${envDir}\`
-              
-              ### Environment Contents
-              - Terraform Configuration: \`${envDir}/\`
-              - State File: \`${envDir}/terraform.tfstate\`
-              - Plan Output: \`${envDir}/plan.out\`
-              - Logs: \`${envDir}/logs/\`
-                - Initialization: \`${envDir}/logs/init.log\`
-                - Plan: \`${envDir}/logs/plan.log\`
-                - Apply: \`${envDir}/logs/apply.log\`
-              
-              ### Artifacts
-              All environment artifacts and logs are available in the workflow artifacts.
-              
-              Created from PR #${context.issue.number}
-              
-              \`\`\`json
-              {
-                "environment": {
-                  "directory": "${envDir}",
-                  "project": "${{ needs.validate-and-deploy.outputs.project_name }}",
-                  "organization": "${{ needs.validate-and-deploy.outputs.org_name }}",
-                  "squad": "${{ needs.validate-and-deploy.outputs.squad_name }}",
-                  "type": "${{ needs.validate-and-deploy.outputs.environment }}",
-                  "created_at": "${new Date().toISOString()}",
-                  "pr_number": ${context.issue.number}
-                }
-              }
-              \`\`\`
-              `
-            });
-            
-            // Add a comment to the PR with a link to the created issue
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Environment Created ✅
-              
-              The environment has been successfully created.
-              
-              For details, see issue #${result.data.number}: [Environment Created: ${{ needs.validate-and-deploy.outputs.project_name }}-${{ needs.validate-and-deploy.outputs.environment }}](${result.data.html_url})
-              
-              Environment directory: \`${envDir}\`
-              `
+              issue_number: ${{ needs.create-issue.outputs.issue_number }},
+              body: body => {
+                const updatedBody = body
+                  .replace('status: "creating"', 'status: "failed"')
+                  .replace(/```json\n[\s\S]*?\n```/, `\`\`\`json\n${JSON.stringify({
+                    environment: {
+                      ...JSON.parse(body.match(/```json\n([\s\S]*?)\n```/)[1]).environment,
+                      status: 'failed',
+                      failed_at: new Date().toISOString()
+                    }
+                  }, null, 2)}\n\`\`\``);
+                return updatedBody;
+              },
+              labels: ['environment', 'status:failed']
             }); 
