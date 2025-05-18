@@ -60,15 +60,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "main" {
   bucket = aws_s3_bucket.main.id
 
   rule {
-    id     = "cleanup"
+    id     = "cleanup-old-versions"
     status = "Enabled"
 
-    expiration {
-      days = 90
+    filter {
+      prefix = ""  # Apply to all objects in the bucket
     }
 
     noncurrent_version_expiration {
-      noncurrent_days = 30
+      noncurrent_days = 90
     }
   }
 } 

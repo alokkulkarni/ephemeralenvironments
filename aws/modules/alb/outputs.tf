@@ -26,4 +26,19 @@ output "http_listener_arn" {
 output "security_group_id" {
   description = "The ID of the security group attached to the ALB"
   value       = aws_security_group.alb.id
+}
+
+output "dns_name" {
+  description = "The DNS name of the load balancer"
+  value       = aws_lb.this.dns_name
+}
+
+output "arn" {
+  description = "The ARN of the load balancer"
+  value       = aws_lb.this.arn
+}
+
+output "zone_id" {
+  description = "The canonical hosted zone ID of the load balancer"
+  value       = aws_lb.this.zone_id
 } 

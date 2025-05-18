@@ -38,13 +38,12 @@ module "vpc" {
 module "iam" {
   source = "./modules/iam"
 
-  environment           = var.environment
-  project_name          = var.project_name
-  org_name              = var.org_name
-  squad_name            = var.squad_name
-  aws_region            = var.aws_region
-  aws_account_id        = data.aws_caller_identity.current.account_id
-  eks_oidc_provider_arn = module.eks.oidc_provider_arn
+  environment    = var.environment
+  project_name   = var.project_name
+  org_name       = var.org_name
+  squad_name     = var.squad_name
+  aws_region     = var.aws_region
+  aws_account_id = data.aws_caller_identity.current.account_id
 
   enable_rds         = var.enable_rds
   enable_dynamodb    = var.enable_dynamodb
@@ -72,11 +71,48 @@ module "eks" {
   cluster_role_arn = module.iam.eks_cluster_role_arn
   node_role_arn    = module.iam.eks_node_group_role_arn
 
-  aws_load_balancer_controller_role_arn = module.iam.aws_load_balancer_controller_role_arn
-  aws_region                            = var.aws_region
+  aws_load_balancer_controller_role_arn  = module.iam.aws_load_balancer_controller_role_arn
+  aws_load_balancer_controller_role_name = "${var.environment}-aws-load-balancer-controller-role"
+  pod_role_name                          = "${var.environment}-eks-pod-role"
+  aws_region                             = var.aws_region
 
   node_groups = var.eks_node_groups
   depends_on  = [module.vpc, module.iam]
+}
+
+# Update IAM roles with OIDC provider ARN after EKS cluster is created
+resource "aws_iam_role_policy" "update_oidc_provider" {
+  for_each = {
+    pod_role = module.iam.eks_pod_role_name
+    alb_role = module.iam.aws_load_balancer_controller_role_name
+  }
+
+  name = "update-oidc-provider"
+  role = each.value
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Principal = {
+          Federated = module.eks.oidc_provider_arn
+        }
+        Condition = {
+          StringEquals = {
+            "${replace(module.eks.oidc_provider_arn, "/^[^/]+/", "")}:sub" = (
+              each.key == "pod_role"
+              ? "system:serviceaccount:default:app-service-account"
+              : "system:serviceaccount:kube-system:aws-load-balancer-controller"
+            )
+          }
+        }
+      }
+    ]
+  })
+
+  depends_on = [module.eks]
 }
 
 # Optional Infrastructure Modules

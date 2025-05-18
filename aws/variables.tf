@@ -56,9 +56,9 @@ variable "eks_cluster_version" {
 variable "eks_node_groups" {
   description = "Map of EKS node groups"
   type = map(object({
-    desired_size = number
-    min_size     = number
-    max_size     = number
+    desired_size   = number
+    min_size       = number
+    max_size       = number
     instance_types = list(string)
   }))
   default = {
@@ -157,7 +157,7 @@ variable "org_name" {
 variable "squad_name" {
   description = "Name of the squad/team"
   type        = string
-} 
+}
 
 variable "lifetimedays" {
   description = "Number of days before the environment is automatically destroyed"

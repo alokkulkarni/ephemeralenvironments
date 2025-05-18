@@ -31,6 +31,7 @@ variable "aws_account_id" {
 variable "eks_oidc_provider_arn" {
   description = "ARN of the EKS OIDC provider"
   type        = string
+  default     = null
 }
 
 variable "enable_rds" {
