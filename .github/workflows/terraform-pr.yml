@@ -53,66 +53,71 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `[ENV] Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}`,
-              body: `## Environment Creation Started 🚀
-              
-              Creating a new environment with the following details:
-              
-              - Project: ${{ steps.tfvars.outputs.project_name }}
-              - Organization: ${{ steps.tfvars.outputs.org_name }}
-              - Squad: ${{ steps.tfvars.outputs.squad_name }}
-              - Environment: ${{ steps.tfvars.outputs.environment }}
-              - PR: #${context.issue.number}
-              
-              ### Status
-              - [ ] Validate tfvars file
-              - [ ] Create environment directory
-              - [ ] Initialize Terraform
-              - [ ] Plan infrastructure
-              - [ ] Apply infrastructure
-              - [ ] Upload artifacts
-              
-              ### Files
-              - \`terraform.tfvars\`: Environment variables (to be attached)
-              - \`plan.out\`: Terraform plan output (to be attached)
-              - \`logs/\`: Directory containing execution logs (to be attached)
-              
-              Created from PR #${context.issue.number}
-              
-              \`\`\`json
-              {
-                "environment": {
-                  "project": "${{ steps.tfvars.outputs.project_name }}",
-                  "organization": "${{ steps.tfvars.outputs.org_name }}",
-                  "squad": "${{ steps.tfvars.outputs.squad_name }}",
-                  "type": "${{ steps.tfvars.outputs.environment }}",
-                  "created_at": "${new Date().toISOString()}",
-                  "pr_number": ${context.issue.number},
-                  "status": "creating"
+            try {
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[ENV] Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}`,
+                body: `## Environment Creation Started 🚀
+                
+                Creating a new environment with the following details:
+                
+                - Project: ${{ steps.tfvars.outputs.project_name }}
+                - Organization: ${{ steps.tfvars.outputs.org_name }}
+                - Squad: ${{ steps.tfvars.outputs.squad_name }}
+                - Environment: ${{ steps.tfvars.outputs.environment }}
+                - PR: #${context.issue.number}
+                
+                ### Status
+                - [ ] Validate tfvars file
+                - [ ] Create environment directory
+                - [ ] Initialize Terraform
+                - [ ] Plan infrastructure
+                - [ ] Apply infrastructure
+                - [ ] Upload artifacts
+                
+                ### Files
+                - \`terraform.tfvars\`: Environment variables (to be attached)
+                - \`plan.out\`: Terraform plan output (to be attached)
+                - \`logs/\`: Directory containing execution logs (to be attached)
+                
+                Created from PR #${context.issue.number}
+                
+                \`\`\`json
+                {
+                  "environment": {
+                    "project": "${{ steps.tfvars.outputs.project_name }}",
+                    "organization": "${{ steps.tfvars.outputs.org_name }}",
+                    "squad": "${{ steps.tfvars.outputs.squad_name }}",
+                    "type": "${{ steps.tfvars.outputs.environment }}",
+                    "created_at": "${new Date().toISOString()}",
+                    "pr_number": ${context.issue.number},
+                    "status": "creating"
+                  }
                 }
-              }
-              \`\`\`
-              `,
-              labels: ['environment', 'status:creating']
-            });
-            
-            // Add a comment to the PR with a link to the created issue
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Environment Creation Started 🚀
+                \`\`\`
+                `,
+                labels: ['environment', 'status:creating']
+              });
               
-              An issue has been created to track the environment creation process.
+              // Add a comment to the PR with a link to the created issue
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## Environment Creation Started 🚀
+                
+                An issue has been created to track the environment creation process.
+                
+                See issue #${issue.data.number}: [Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}](${issue.data.html_url})
+                `
+              });
               
-              See issue #${issue.data.number}: [Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}](${issue.data.html_url})
-              `
-            });
-            
-            return issue.data.number;
+              return issue.data.number;
+            } catch (error) {
+              console.error('Error creating issue:', error);
+              throw error;
+            }
 
   validate-and-deploy:
     name: Validate and Deploy Environment
@@ -140,20 +145,24 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }}
-            });
-            
-            const updatedBody = issue.data.body.replace('- [ ] Validate tfvars file', '- [x] Validate tfvars file');
-            
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: updatedBody
-            });
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              const updatedBody = issue.data.body.replace('- [ ] Validate tfvars file', '- [x] Validate tfvars file');
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: updatedBody
+              });
+            } catch (error) {
+              console.error('Error updating issue status:', error);
+            }
 
       - name: Validate tfvars file
         id: validate
@@ -216,20 +225,24 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }}
-            });
-            
-            const updatedBody = issue.data.body.replace('- [ ] Create environment directory', '- [x] Create environment directory');
-            
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: updatedBody
-            });
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              const updatedBody = issue.data.body.replace('- [ ] Create environment directory', '- [x] Create environment directory');
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: updatedBody
+              });
+            } catch (error) {
+              console.error('Error updating issue status:', error);
+            }
 
       - name: Create environments directory
         id: env_dir
@@ -298,40 +311,48 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const tfvarsContent = fs.readFileSync(process.env.TFVARS_PATH, 'utf8');
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: `## Terraform Variables File
+            try {
+              const fs = require('fs');
+              const tfvarsContent = fs.readFileSync(process.env.TFVARS_PATH, 'utf8');
               
-              \`\`\`hcl
-              ${tfvarsContent}
-              \`\`\`
-              `
-            });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: `## Terraform Variables File
+                
+                \`\`\`hcl
+                ${tfvarsContent}
+                \`\`\`
+                `
+              });
+            } catch (error) {
+              console.error('Error attaching tfvars file:', error);
+            }
 
       - name: Update Issue Status - Initializing
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }}
-            });
-            
-            const updatedBody = issue.data.body.replace('- [ ] Initialize Terraform', '- [x] Initialize Terraform');
-            
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: updatedBody
-            });
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              const updatedBody = issue.data.body.replace('- [ ] Initialize Terraform', '- [x] Initialize Terraform');
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: updatedBody
+              });
+            } catch (error) {
+              console.error('Error updating issue status:', error);
+            }
 
       - name: Terraform Init
         working-directory: ${{ env.ENV_DIR }}
@@ -361,40 +382,48 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const initLogContent = fs.readFileSync(process.env.INIT_LOG_PATH, 'utf8');
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: `## Terraform Initialization Logs
+            try {
+              const fs = require('fs');
+              const initLogContent = fs.readFileSync(process.env.INIT_LOG_PATH, 'utf8');
               
-              \`\`\`
-              ${initLogContent}
-              \`\`\`
-              `
-            });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: `## Terraform Initialization Logs
+                
+                \`\`\`
+                ${initLogContent}
+                \`\`\`
+                `
+              });
+            } catch (error) {
+              console.error('Error attaching init logs:', error);
+            }
 
       - name: Update Issue Status - Planning
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }}
-            });
-            
-            const updatedBody = issue.data.body.replace('- [ ] Plan infrastructure', '- [x] Plan infrastructure');
-            
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: updatedBody
-            });
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              const updatedBody = issue.data.body.replace('- [ ] Plan infrastructure', '- [x] Plan infrastructure');
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: updatedBody
+              });
+            } catch (error) {
+              console.error('Error updating issue status:', error);
+            }
 
       - name: Terraform Plan
         working-directory: ${{ env.ENV_DIR }}
@@ -434,40 +463,48 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const planLogContent = fs.readFileSync(process.env.PLAN_LOG_PATH, 'utf8');
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: `## Terraform Plan Logs
+            try {
+              const fs = require('fs');
+              const planLogContent = fs.readFileSync(process.env.PLAN_LOG_PATH, 'utf8');
               
-              \`\`\`
-              ${planLogContent}
-              \`\`\`
-              `
-            });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: `## Terraform Plan Logs
+                
+                \`\`\`
+                ${planLogContent}
+                \`\`\`
+                `
+              });
+            } catch (error) {
+              console.error('Error attaching plan logs:', error);
+            }
 
       - name: Update Issue Status - Applying
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }}
-            });
-            
-            const updatedBody = issue.data.body.replace('- [ ] Apply infrastructure', '- [x] Apply infrastructure');
-            
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: updatedBody
-            });
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              const updatedBody = issue.data.body.replace('- [ ] Apply infrastructure', '- [x] Apply infrastructure');
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: updatedBody
+              });
+            } catch (error) {
+              console.error('Error updating issue status:', error);
+            }
 
       - name: Terraform Apply
         working-directory: ${{ env.ENV_DIR }}
@@ -501,20 +538,24 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs = require('fs');
-            const applyLogContent = fs.readFileSync(process.env.APPLY_LOG_PATH, 'utf8');
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: `## Terraform Apply Logs
+            try {
+              const fs = require('fs');
+              const applyLogContent = fs.readFileSync(process.env.APPLY_LOG_PATH, 'utf8');
               
-              \`\`\`
-              ${applyLogContent}
-              \`\`\`
-              `
-            });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: `## Terraform Apply Logs
+                
+                \`\`\`
+                ${applyLogContent}
+                \`\`\`
+                `
+              });
+            } catch (error) {
+              console.error('Error attaching apply logs:', error);
+            }
 
       - name: Update Issue Status - Complete
         if: success()
@@ -547,16 +588,21 @@ jobs:
               .replace('status: "creating"', 'status: "active"');
             
             // Update the JSON metadata
-            const jsonRegex = /```json\n[\s\S]*?\n```/;
-            updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
-            
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: updatedBody,
-              labels: ['environment', 'status:active']
-            });
+            try {
+              const jsonRegex = /```json\n[\s\S]*?\n```/;
+              updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: updatedBody,
+                labels: ['environment', 'status:active']
+              });
+            } catch (error) {
+              console.error('Error updating issue:', error);
+              throw error;
+            }
 
       - name: Upload environment artifacts
         uses: actions/upload-artifact@v4
@@ -571,32 +617,47 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }}
-            });
-            
-            const currentMetadata = JSON.parse(issue.data.body.match(/```json\n([\s\S]*?)\n```/)[1]);
-            const updatedMetadata = {
-              environment: {
-                ...currentMetadata.environment,
-                status: 'failed',
-                failed_at: new Date().toISOString()
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              // Safely parse the JSON metadata
+              let currentMetadata = { environment: {} };
+              try {
+                const jsonMatch = issue.data.body.match(/```json\n([\s\S]*?)\n```/);
+                if (jsonMatch && jsonMatch[1]) {
+                  currentMetadata = JSON.parse(jsonMatch[1]);
+                }
+              } catch (parseError) {
+                console.error('Error parsing JSON metadata:', parseError);
               }
-            };
-            
-            let updatedBody = issue.data.body
-              .replace('status: "creating"', 'status: "failed"');
-            
-            // Update the JSON metadata
-            const jsonRegex = /```json\n[\s\S]*?\n```/;
-            updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(updatedMetadata, null, 2)}\n\`\`\``);
-            
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: updatedBody,
-              labels: ['environment', 'status:failed']
-            }); 
+              
+              const updatedMetadata = {
+                environment: {
+                  ...currentMetadata.environment,
+                  status: 'failed',
+                  failed_at: new Date().toISOString()
+                }
+              };
+              
+              let updatedBody = issue.data.body
+                .replace('status: "creating"', 'status: "failed"');
+              
+              // Update the JSON metadata
+              const jsonRegex = /```json\n[\s\S]*?\n```/;
+              updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(updatedMetadata, null, 2)}\n\`\`\``);
+              
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: updatedBody,
+                labels: ['environment', 'status:failed']
+              });
+            } catch (error) {
+              console.error('Error updating issue on failure:', error);
+              throw error;
+            } 
