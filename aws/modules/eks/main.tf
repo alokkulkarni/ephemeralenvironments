@@ -16,6 +16,44 @@ terraform {
   }
 }
 
+# Configure Kubernetes provider
+provider "kubernetes" {
+  host                   = aws_eks_cluster.main.endpoint
+  cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args = [
+      "eks",
+      "get-token",
+      "--cluster-name",
+      aws_eks_cluster.main.name,
+      "--region",
+      var.aws_region
+    ]
+  }
+}
+
+# Configure Helm provider
+provider "helm" {
+  kubernetes {
+    host                   = aws_eks_cluster.main.endpoint
+    cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
+    exec {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args = [
+        "eks",
+        "get-token",
+        "--cluster-name",
+        aws_eks_cluster.main.name,
+        "--region",
+        var.aws_region
+      ]
+    }
+  }
+}
+
 locals {
   # Get current timestamp in ISO 8601 format
   timestamp = formatdate("YYYY-MM-DD'T'HH:mm:ssZ", timestamp())
@@ -115,6 +153,41 @@ resource "aws_iam_role_policy_attachment" "update_load_balancer_controller_role"
   depends_on = [aws_iam_openid_connect_provider.eks]
 }
 
+# Create ServiceAccount for AWS Load Balancer Controller
+resource "kubernetes_service_account" "aws_load_balancer_controller" {
+  metadata {
+    name      = "aws-load-balancer-controller"
+    namespace = "kube-system"
+    annotations = {
+      "eks.amazonaws.com/role-arn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.aws_load_balancer_controller_role_name}"
+    }
+  }
+
+  depends_on = [
+    aws_eks_cluster.main,
+    aws_eks_node_group.main
+  ]
+}
+
+# Create IngressClass for AWS Load Balancer Controller
+resource "kubernetes_ingress_class_v1" "alb" {
+  metadata {
+    name = "alb"
+    annotations = {
+      "ingressclass.kubernetes.io/is-default-class" = "true"
+    }
+  }
+  spec {
+    controller = "ingress.k8s.aws/alb"
+  }
+
+  depends_on = [
+    aws_eks_cluster.main,
+    aws_eks_node_group.main,
+    kubernetes_service_account.aws_load_balancer_controller
+  ]
+}
+
 # AWS Load Balancer Controller
 resource "helm_release" "aws_load_balancer_controller" {
   name       = "aws-load-balancer-controller"
@@ -145,36 +218,11 @@ resource "helm_release" "aws_load_balancer_controller" {
 
   depends_on = [
     aws_eks_cluster.main,
+    aws_eks_node_group.main,
     kubernetes_service_account.aws_load_balancer_controller,
-    aws_iam_openid_connect_provider.eks
+    kubernetes_ingress_class_v1.alb
   ]
 }
 
 # Get current AWS account ID
-data "aws_caller_identity" "current" {}
-
-# Create ServiceAccount for AWS Load Balancer Controller
-resource "kubernetes_service_account" "aws_load_balancer_controller" {
-  metadata {
-    name      = "aws-load-balancer-controller"
-    namespace = "kube-system"
-    annotations = {
-      "eks.amazonaws.com/role-arn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.aws_load_balancer_controller_role_name}"
-    }
-  }
-
-  depends_on = [aws_eks_cluster.main]
-}
-
-# Create IngressClass for AWS Load Balancer Controller
-resource "kubernetes_ingress_class_v1" "alb" {
-  metadata {
-    name = "alb"
-    annotations = {
-      "ingressclass.kubernetes.io/is-default-class" = "true"
-    }
-  }
-  spec {
-    controller = "ingress.k8s.aws/alb"
-  }
-} 
+data "aws_caller_identity" "current" {} 
