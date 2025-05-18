@@ -85,30 +85,54 @@ jobs:
           echo "squad_name=$SQUAD_NAME" >> $GITHUB_OUTPUT
           echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
 
-      - name: Comment PR with Validation Results
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const tfvars = fs.readFileSync('aws/terraform.tfvars', 'utf8');
-            
-            const comment = `## Environment Configuration Validation ✅
-            
-            The terraform.tfvars file has been validated and contains all required variables:
-            
-            \`\`\`hcl
-            ${tfvars}
-            \`\`\`
-            
-            Creating environment now. An issue will be created once the environment is ready.`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
+      - name: Create environments directory
+        id: env_dir
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
+          ENV_DIR="environments/${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.org_name }}-${{ steps.validate.outputs.squad_name }}-${{ steps.validate.outputs.environment }}-${TIMESTAMP}"
+          mkdir -p "$ENV_DIR"
+          echo "env_dir=$ENV_DIR" >> $GITHUB_OUTPUT
+          echo "ENV_DIR=$ENV_DIR" >> $GITHUB_ENV
+
+      - name: Setup environment directory
+        run: |
+          # Create necessary subdirectories
+          mkdir -p "${{ env.ENV_DIR }}/.terraform"
+          mkdir -p "${{ env.ENV_DIR }}/logs"
+          
+          # Copy all Terraform files to the environment directory
+          cp -r aws/* "${{ env.ENV_DIR }}/"
+          
+          # Create backend configuration
+          cat > "${{ env.ENV_DIR }}/backend.tf" <<EOF
+          terraform {
+            backend "local" {
+              path = "terraform.tfstate"
+            }
+          }
+          EOF
+          
+          # Create a README with environment details
+          cat > "${{ env.ENV_DIR }}/README.md" <<EOF
+          # Environment: ${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.environment }}
+          
+          Created: $(date)
+          Project: ${{ steps.validate.outputs.project_name }}
+          Organization: ${{ steps.validate.outputs.org_name }}
+          Squad: ${{ steps.validate.outputs.squad_name }}
+          Environment: ${{ steps.validate.outputs.environment }}
+          
+          ## Files
+          - \`terraform.tfvars\`: Environment variables
+          - \`terraform.tfstate\`: Terraform state file
+          - \`plan.out\`: Terraform plan output
+          - \`logs/\`: Directory containing execution logs
+          
+          ## Logs
+          - \`logs/init.log\`: Terraform initialization logs
+          - \`logs/plan.log\`: Terraform plan logs
+          - \`logs/apply.log\`: Terraform apply logs
+          EOF
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -127,67 +151,29 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
-            aws/.terraform
-            aws/.terraform.lock.hcl
+            ${{ env.ENV_DIR }}/.terraform
+            ${{ env.ENV_DIR }}/.terraform.lock.hcl
             ~/.terraform.d/plugin-cache
           key: ${{ runner.os }}-terraform-${{ hashFiles('aws/**/*.tf', 'aws/**/*.tfvars') }}
           restore-keys: |
             ${{ runner.os }}-terraform-
 
-      - name: Create environments directory
-        id: env_dir
-        run: |
-          TIMESTAMP=$(date +"%Y%m%d%H%M%S")
-          ENV_DIR="environments/${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.org_name }}-${{ steps.validate.outputs.squad_name }}-${{ steps.validate.outputs.environment }}-${TIMESTAMP}"
-          mkdir -p "$ENV_DIR"
-          echo "env_dir=$ENV_DIR" >> $GITHUB_OUTPUT
-
-      - name: Copy tfvars from PR
-        run: |
-          cp aws/terraform.tfvars "${{ steps.env_dir.outputs.env_dir }}/terraform.tfvars"
-
-      - name: Create local backend config
-        working-directory: aws
-        run: |
-          # Remove any existing backend config
-          rm -f backend.tf backend.hcl
-          
-          # Create new backend config
-          cat > backend.tf <<EOF
-          terraform {
-            backend "local" {
-              path = "../${{ steps.env_dir.outputs.env_dir }}/terraform.tfstate"
-            }
-          }
-          EOF
-
-      - name: Setup Terraform working directory
-        run: |
-          # Create .terraform directory in the environment directory
-          mkdir -p "${{ steps.env_dir.outputs.env_dir }}/.terraform"
-          
-          # Copy all Terraform files to the environment directory
-          cp -r aws/* "${{ steps.env_dir.outputs.env_dir }}/"
-          
-          # Remove the aws directory copy to avoid confusion
-          rm -rf "${{ steps.env_dir.outputs.env_dir }}/aws"
-
       - name: Terraform Init
-        working-directory: ${{ steps.env_dir.outputs.env_dir }}
+        working-directory: ${{ env.ENV_DIR }}
         env:
           TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
         run: |
           # First init without plugin-dir to download providers
-          terraform init -upgrade -reconfigure
+          terraform init -upgrade -reconfigure | tee logs/init.log
           
           # Then init with plugin-dir to use cached providers
           terraform init \
             -reconfigure \
             -plugin-dir="${{ env.TF_PLUGIN_CACHE_DIR }}" \
-            | tee "init.log"
+            | tee -a logs/init.log
 
       - name: Terraform Plan
-        working-directory: ${{ steps.env_dir.outputs.env_dir }}
+        working-directory: ${{ env.ENV_DIR }}
         env:
           TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
           TF_WORKSPACE: "default"
@@ -197,10 +183,10 @@ jobs:
             -out="plan.out" \
             -parallelism=10 \
             -refresh=true \
-            | tee "plan.log"
+            | tee logs/plan.log
 
       - name: Terraform Apply
-        working-directory: ${{ steps.env_dir.outputs.env_dir }}
+        working-directory: ${{ env.ENV_DIR }}
         env:
           TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
           TF_WORKSPACE: "default"
@@ -208,33 +194,27 @@ jobs:
           terraform apply \
             -auto-approve \
             -var-file="terraform.tfvars" \
-            | tee "apply.log"
+            | tee logs/apply.log
+
+      - name: Set success flag
+        if: success()
+        run: |
+          echo "success=true" >> $GITHUB_OUTPUT
+          echo "env_dir=${{ env.ENV_DIR }}" >> $GITHUB_OUTPUT
 
       - name: Upload environment artifacts
         uses: actions/upload-artifact@v4
         with:
           name: environment-${{ github.head_ref }}
-          path: ${{ steps.env_dir.outputs.env_dir }}
+          path: ${{ env.ENV_DIR }}
+          retention-days: 30
 
       - name: Commit environment folder
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Add environment for ${{ steps.validate.outputs.project_name }}-${{ steps.validate.outputs.environment }}"
-          file_pattern: ${{ steps.env_dir.outputs.env_dir }}
+          file_pattern: ${{ env.ENV_DIR }}
           branch: main
-
-      - name: Set success flag
-        if: success()
-        run: echo "success=true" >> $GITHUB_OUTPUT
-
-      - name: Set environment details
-        if: success()
-        run: |
-          echo "project_name=${{ steps.validate.outputs.project_name }}" >> $GITHUB_OUTPUT
-          echo "org_name=${{ steps.validate.outputs.org_name }}" >> $GITHUB_OUTPUT
-          echo "squad_name=${{ steps.validate.outputs.squad_name }}" >> $GITHUB_OUTPUT
-          echo "environment=${{ steps.validate.outputs.environment }}" >> $GITHUB_OUTPUT
-          echo "env_dir=${{ steps.env_dir.outputs.env_dir }}" >> $GITHUB_OUTPUT
 
   create-issue:
     name: Create Environment Issue
@@ -250,6 +230,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const envDir = '${{ needs.validate-and-deploy.outputs.env_dir }}';
             const result = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -262,11 +243,35 @@ jobs:
               - Organization: ${{ needs.validate-and-deploy.outputs.org_name }}
               - Squad: ${{ needs.validate-and-deploy.outputs.squad_name }}
               - Environment: ${{ needs.validate-and-deploy.outputs.environment }}
-              - Environment Directory: ${{ needs.validate-and-deploy.outputs.env_dir }}
+              - Environment Directory: \`${envDir}\`
               
+              ### Environment Contents
+              - Terraform Configuration: \`${envDir}/\`
+              - State File: \`${envDir}/terraform.tfstate\`
+              - Plan Output: \`${envDir}/plan.out\`
+              - Logs: \`${envDir}/logs/\`
+                - Initialization: \`${envDir}/logs/init.log\`
+                - Plan: \`${envDir}/logs/plan.log\`
+                - Apply: \`${envDir}/logs/apply.log\`
+              
+              ### Artifacts
               All environment artifacts and logs are available in the workflow artifacts.
               
               Created from PR #${context.issue.number}
+              
+              \`\`\`json
+              {
+                "environment": {
+                  "directory": "${envDir}",
+                  "project": "${{ needs.validate-and-deploy.outputs.project_name }}",
+                  "organization": "${{ needs.validate-and-deploy.outputs.org_name }}",
+                  "squad": "${{ needs.validate-and-deploy.outputs.squad_name }}",
+                  "type": "${{ needs.validate-and-deploy.outputs.environment }}",
+                  "created_at": "${new Date().toISOString()}",
+                  "pr_number": ${context.issue.number}
+                }
+              }
+              \`\`\`
               `
             });
             
@@ -280,5 +285,7 @@ jobs:
               The environment has been successfully created.
               
               For details, see issue #${result.data.number}: [Environment Created: ${{ needs.validate-and-deploy.outputs.project_name }}-${{ needs.validate-and-deploy.outputs.environment }}](${result.data.html_url})
+              
+              Environment directory: \`${envDir}\`
               `
             }); 
