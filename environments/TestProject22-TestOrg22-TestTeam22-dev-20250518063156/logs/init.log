@@ -1,0 +1,48 @@
+
+[0m[1mInitializing the backend...[0m
+[0m[32m
+Successfully configured the backend "local"! Terraform will automatically
+use this backend unless the backend configuration changes.[0m
+[0m[1mUpgrading modules...[0m
+- alb in modules/alb
+- dynamodb in modules/dynamodb
+- eks in modules/eks
+- elasticache in modules/elasticache
+- iam in modules/iam
+- rds in modules/rds
+- s3 in modules/s3
+- vpc in modules/vpc
+
+[0m[1mInitializing provider plugins...[0m
+- Finding hashicorp/helm versions matching "~> 2.11"...
+- Finding hashicorp/aws versions matching "~> 5.0"...
+- Finding hashicorp/kubernetes versions matching "~> 2.23"...
+- Installing hashicorp/helm v2.17.0...
+- Installed hashicorp/helm v2.17.0 (signed by HashiCorp)
+- Installing hashicorp/aws v5.98.0...
+- Installed hashicorp/aws v5.98.0 (signed by HashiCorp)
+- Installing hashicorp/kubernetes v2.36.0...
+- Installed hashicorp/kubernetes v2.36.0 (signed by HashiCorp)
+
+Terraform has created a lock file [1m.terraform.lock.hcl[0m to record the provider
+selections it made above. Include this file in your version control repository
+so that Terraform can guarantee to make the same selections by default when
+you run "terraform init" in the future.[0m
+
+[0m[1m[32mTerraform has been successfully initialized![0m[32m[0m
+
+[0m[1mInitializing the backend...[0m
+[0m[32m
+Successfully configured the backend "local"! Terraform will automatically
+use this backend unless the backend configuration changes.[0m
+[0m[1mInitializing modules...[0m
+
+[0m[1mInitializing provider plugins...[0m
+- Reusing previous version of hashicorp/helm from the dependency lock file
+- Reusing previous version of hashicorp/aws from the dependency lock file
+- Reusing previous version of hashicorp/kubernetes from the dependency lock file
+- Using previously-installed hashicorp/helm v2.17.0
+- Using previously-installed hashicorp/aws v5.98.0
+- Using previously-installed hashicorp/kubernetes v2.36.0
+
+[0m[1m[32mTerraform has been successfully initialized![0m[32m[0m
