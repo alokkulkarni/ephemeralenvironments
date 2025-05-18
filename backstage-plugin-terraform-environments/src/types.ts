@@ -1,22 +1,47 @@
 export interface Environment {
   id: string;
-  name: string;
+  name?: string;
   project: string;
   organization: string;
   squad: string;
-  environment: 'dev' | 'staging' | 'prod';
-  status: string;
+  environment: 'dev' | 'staging' | 'prod' | 'unknown';
+  status: 'creating' | 'active' | 'failed' | 'destroying' | 'destroyed' | 'open' | 'closed' | 'unknown';
   createdAt: string;
   updatedAt: string;
   labels: string[];
-  lifetimeDays: number;
-  autoDestroy: boolean;
+  lifetimeDays?: number;
+  autoDestroy?: boolean;
+}
+
+export interface EnvironmentMetadata {
+  name?: string;
+  project: string;
+  organization: string;
+  squad: string;
+  type: 'dev' | 'staging' | 'prod';
+  created_at: string;
+  pr_number?: number;
+  status: 'creating' | 'active' | 'failed' | 'destroying' | 'destroyed';
+  lifetimeDays?: number;
+  autoDestroy?: boolean;
+}
+
+export interface EnvironmentListParams {
+  owner: string;
+  repo: string;
+  projectName: string;
+  orgName: string;
+  squadName: string;
+}
+
+export interface EnvironmentGetParams extends EnvironmentListParams {
+  id: string;
 }
 
 export interface EnvironmentApi {
-  listEnvironments(config: { owner: string; repo: string }): Promise<Environment[]>;
-  getEnvironment(config: { owner: string; repo: string; id: string }): Promise<Environment>;
-  destroyEnvironment(config: { owner: string; repo: string; id: string }): Promise<void>;
+  listEnvironments: (params: EnvironmentListParams) => Promise<Environment[]>;
+  getEnvironment: (params: EnvironmentGetParams) => Promise<Environment>;
+  destroyEnvironment: (params: EnvironmentGetParams) => Promise<void>;
   getEnvironmentStatus(config: { owner: string; repo: string; id: string }): Promise<{ status: string; updatedAt: string }>;
   updateEnvironmentStatus(config: { owner: string; repo: string; id: string; status: string }): Promise<void>;
 } 

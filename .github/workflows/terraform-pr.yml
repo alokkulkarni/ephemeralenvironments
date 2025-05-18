@@ -140,11 +140,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }}
+            });
+            
+            const updatedBody = issue.data.body.replace('- [ ] Validate tfvars file', '- [x] Validate tfvars file');
+            
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: body => body.replace('- [ ] Validate tfvars file', '- [x] Validate tfvars file')
+              body: updatedBody
             });
 
       - name: Validate tfvars file
@@ -208,11 +216,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }}
+            });
+            
+            const updatedBody = issue.data.body.replace('- [ ] Create environment directory', '- [x] Create environment directory');
+            
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: body => body.replace('- [ ] Create environment directory', '- [x] Create environment directory')
+              body: updatedBody
             });
 
       - name: Create environments directory
@@ -302,11 +318,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }}
+            });
+            
+            const updatedBody = issue.data.body.replace('- [ ] Initialize Terraform', '- [x] Initialize Terraform');
+            
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: body => body.replace('- [ ] Initialize Terraform', '- [x] Initialize Terraform')
+              body: updatedBody
             });
 
       - name: Terraform Init
@@ -357,11 +381,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }}
+            });
+            
+            const updatedBody = issue.data.body.replace('- [ ] Plan infrastructure', '- [x] Plan infrastructure');
+            
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: body => body.replace('- [ ] Plan infrastructure', '- [x] Plan infrastructure')
+              body: updatedBody
             });
 
       - name: Terraform Plan
@@ -422,11 +454,19 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }}
+            });
+            
+            const updatedBody = issue.data.body.replace('- [ ] Apply infrastructure', '- [x] Apply infrastructure');
+            
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: body => body.replace('- [ ] Apply infrastructure', '- [x] Apply infrastructure')
+              body: updatedBody
             });
 
       - name: Terraform Apply
@@ -482,6 +522,12 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }}
+            });
+            
             const envDir = '${{ env.ENV_DIR }}';
             const metadata = {
               environment: {
@@ -496,17 +542,19 @@ jobs:
               }
             };
             
+            let updatedBody = issue.data.body
+              .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
+              .replace('status: "creating"', 'status: "active"');
+            
+            // Update the JSON metadata
+            const jsonRegex = /```json\n[\s\S]*?\n```/;
+            updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
+            
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: body => {
-                const updatedBody = body
-                  .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
-                  .replace('status: "creating"', 'status: "active"')
-                  .replace(/```json\n[\s\S]*?\n```/, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
-                return updatedBody;
-              },
+              body: updatedBody,
               labels: ['environment', 'status:active']
             });
 
@@ -523,21 +571,32 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ needs.create-issue.outputs.issue_number }}
+            });
+            
+            const currentMetadata = JSON.parse(issue.data.body.match(/```json\n([\s\S]*?)\n```/)[1]);
+            const updatedMetadata = {
+              environment: {
+                ...currentMetadata.environment,
+                status: 'failed',
+                failed_at: new Date().toISOString()
+              }
+            };
+            
+            let updatedBody = issue.data.body
+              .replace('status: "creating"', 'status: "failed"');
+            
+            // Update the JSON metadata
+            const jsonRegex = /```json\n[\s\S]*?\n```/;
+            updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(updatedMetadata, null, 2)}\n\`\`\``);
+            
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.create-issue.outputs.issue_number }},
-              body: body => {
-                const updatedBody = body
-                  .replace('status: "creating"', 'status: "failed"')
-                  .replace(/```json\n[\s\S]*?\n```/, `\`\`\`json\n${JSON.stringify({
-                    environment: {
-                      ...JSON.parse(body.match(/```json\n([\s\S]*?)\n```/)[1]).environment,
-                      status: 'failed',
-                      failed_at: new Date().toISOString()
-                    }
-                  }, null, 2)}\n\`\`\``);
-                return updatedBody;
-              },
+              body: updatedBody,
               labels: ['environment', 'status:failed']
             }); 

@@ -1,6 +1,6 @@
 {
   "name": "@invincible/backstage-plugin-terraform-environments",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "main": "./dist/index.esm.js",
   "types": "./dist/index.d.ts",
   "license": "Apache-2.0",
@@ -13,9 +13,9 @@
     "clean": "backstage-cli package clean",
     "prepack": "backstage-cli package prepack",
     "postpack": "backstage-cli package postpack",
-    "tsc": "tsc --skipLibCheck --noEmit",
+    "tsc": "tsc --skipLibCheck",
     "tsc:check": "tsc --skipLibCheck --noEmit",
-    "build:types": "tsc --emitDeclarationOnly",
+    "build:types": "tsc --emitDeclarationOnly --outDir dist-types",
     "postinstall": "node -e \"try { require('./scripts/add-plugin-to-app.js') } catch(e) { console.log('Skipping postinstall script') }\""
   },
   "dependencies": {

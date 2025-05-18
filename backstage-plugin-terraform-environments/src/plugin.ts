@@ -1,4 +1,4 @@
-import { createApiFactory, createPlugin, createRoutableExtension, createApiRef, configApiRef, discoveryApiRef } from '@backstage/core-plugin-api';
+import { createApiFactory, createPlugin, createRoutableExtension, createApiRef } from '@backstage/core-plugin-api';
 import { rootRouteRef } from './routes';
 import { scmAuthApiRef } from '@backstage/integration-react';
 import { Octokit } from '@octokit/rest';
@@ -145,12 +145,8 @@ export const terraformEnvironmentsPlugin = createPlugin({
   apis: [
     createApiFactory({
       api: githubApiRef,
-      deps: { 
-        scmAuthApi: scmAuthApiRef,
-        configApi: configApiRef,
-        discoveryApi: discoveryApiRef,
-      },
-      factory: ({ scmAuthApi, configApi, discoveryApi }) => {
+      deps: { scmAuthApi: scmAuthApiRef },
+      factory: ({ scmAuthApi }) => {
         return {
           listIssues: async ({ owner, repo, labels }) => {
             try {

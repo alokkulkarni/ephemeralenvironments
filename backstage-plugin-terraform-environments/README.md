@@ -106,9 +106,9 @@ npm install @invincible/backstage-plugin-terraform-environments
 
    These defaults will be used if entity annotations are not provided.
 
-## Annotation-based Configuration
+## Entity Annotations
 
-This plugin also supports entity-based configuration through annotations in your `catalog-info.yaml`:
+This plugin uses the following annotations in your `catalog-info.yaml`:
 
 ```yaml
 apiVersion: backstage.io/v1alpha1
@@ -116,17 +116,55 @@ kind: Component
 metadata:
   name: example-service
   annotations:
-    github.com/owner: myOrg
-    github.com/repo: my-environments-repo
-# ... rest of entity definition
+    # Required annotations
+    terraform-environments/project-name: "my-project"
+    terraform-environments/org-name: "my-org"
+    terraform-environments/squad-name: "my-squad"
+    
+    # Optional annotations (fallback to config if not provided)
+    terraform-environments/github-owner: "myOrg"
+    terraform-environments/github-repo: "my-environments-repo"
 ```
 
-If these annotations are present, they will override the default configuration.
+### Annotation Reference
+
+| Annotation Key | Required | Description |
+|----------------|----------|-------------|
+| `terraform-environments/project-name` | Yes | Name of the project |
+| `terraform-environments/org-name` | Yes | Name of the organization |
+| `terraform-environments/squad-name` | Yes | Name of the squad |
+| `terraform-environments/github-owner` | No | GitHub organization/owner (falls back to config) |
+| `terraform-environments/github-repo` | No | GitHub repository name (falls back to config) |
 
 ## Usage
 
-- Navigate to `/terraform-environments` in your Backstage app.
-- View, manage, and destroy ephemeral environments.
+1. Add the required annotations to your component's `catalog-info.yaml`
+2. Navigate to `/terraform-environments` in your Backstage app
+3. View and manage your environments:
+   - List all environments for your project
+   - View environment details
+   - Destroy environments when no longer needed
+
+## Environment Metadata
+
+Each environment is tracked using a GitHub issue with the following metadata structure:
+
+```json
+{
+  "environment": {
+    "name": "optional-name",
+    "project": "project-name",
+    "organization": "org-name",
+    "squad": "squad-name",
+    "type": "dev|staging|prod",
+    "created_at": "timestamp",
+    "pr_number": 123,
+    "status": "creating|active|failed|destroying|destroyed",
+    "lifetimeDays": 7,
+    "autoDestroy": true
+  }
+}
+```
 
 ## Troubleshooting
 
