@@ -563,32 +563,32 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ needs.create-issue.outputs.issue_number }}
-            });
-            
-            const envDir = '${{ env.ENV_DIR }}';
-            const metadata = {
-              environment: {
-                directory: envDir,
-                project: '${{ steps.validate.outputs.project_name }}',
-                organization: '${{ steps.validate.outputs.org_name }}',
-                squad: '${{ steps.validate.outputs.squad_name }}',
-                type: '${{ steps.validate.outputs.environment }}',
-                created_at: new Date().toISOString(),
-                pr_number: context.issue.number,
-                status: 'active'
-              }
-            };
-            
-            let updatedBody = issue.data.body
-              .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
-              .replace('status: "creating"', 'status: "active"');
-            
-            // Update the JSON metadata
             try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              const envDir = '${{ env.ENV_DIR }}';
+              const metadata = {
+                environment: {
+                  directory: envDir,
+                  project: '${{ steps.validate.outputs.project_name }}',
+                  organization: '${{ steps.validate.outputs.org_name }}',
+                  squad: '${{ steps.validate.outputs.squad_name }}',
+                  type: '${{ steps.validate.outputs.environment }}',
+                  created_at: new Date().toISOString(),
+                  pr_number: context.issue.number,
+                  status: 'active'
+                }
+              };
+              
+              let updatedBody = issue.data.body
+                .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
+                .replace('status: "creating"', 'status: "active"');
+              
+              // Update the JSON metadata
               const jsonRegex = /```json\n[\s\S]*?\n```/;
               updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
               

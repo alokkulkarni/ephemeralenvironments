@@ -31,6 +31,14 @@ const parseEnvironmentType = (type: string): Environment['environment'] => {
 export const createEnvironmentApi = (githubApi: typeof githubApiRef.T): EnvironmentApi => {
   return {
     listEnvironments: async ({ owner, repo, projectName, orgName, squadName }: EnvironmentListParams) => {
+      // Validate required parameters
+      if (!owner || !repo) {
+        throw new Error('GitHub owner and repo must be provided');
+      }
+      if (!projectName || !orgName || !squadName) {
+        throw new Error('Project, organization, and squad must be provided');
+      }
+      
       const issues = await githubApi.listIssues({ 
         owner, 
         repo, 
@@ -65,6 +73,17 @@ export const createEnvironmentApi = (githubApi: typeof githubApiRef.T): Environm
     },
 
     getEnvironment: async ({ owner, repo, id, projectName, orgName, squadName }: EnvironmentGetParams) => {
+      // Validate required parameters
+      if (!owner || !repo) {
+        throw new Error('GitHub owner and repo must be provided');
+      }
+      if (!projectName || !orgName || !squadName) {
+        throw new Error('Project, organization, and squad must be provided');
+      }
+      if (!id) {
+        throw new Error('Environment ID must be provided');
+      }
+      
       const issue = await githubApi.getIssue({ owner, repo, number: parseInt(id, 10) });
       
       try {
@@ -95,6 +114,17 @@ export const createEnvironmentApi = (githubApi: typeof githubApiRef.T): Environm
     },
 
     destroyEnvironment: async ({ owner, repo, id, projectName, orgName, squadName }: EnvironmentGetParams) => {
+      // Validate required parameters
+      if (!owner || !repo) {
+        throw new Error('GitHub owner and repo must be provided');
+      }
+      if (!projectName || !orgName || !squadName) {
+        throw new Error('Project, organization, and squad must be provided');
+      }
+      if (!id) {
+        throw new Error('Environment ID must be provided');
+      }
+      
       // First verify the environment exists and belongs to the project
       await createEnvironmentApi(githubApi).getEnvironment({ 
         owner, 
@@ -123,6 +153,14 @@ export const createEnvironmentApi = (githubApi: typeof githubApiRef.T): Environm
     },
 
     getEnvironmentStatus: async ({ owner, repo, id }) => {
+      // Validate required parameters
+      if (!owner || !repo) {
+        throw new Error('GitHub owner and repo must be provided');
+      }
+      if (!id) {
+        throw new Error('Environment ID must be provided');
+      }
+      
       const issue = await githubApi.getIssue({ owner, repo, number: parseInt(id, 10) });
       return {
         status: parseEnvironmentStatus(issue.state),
@@ -131,6 +169,17 @@ export const createEnvironmentApi = (githubApi: typeof githubApiRef.T): Environm
     },
 
     updateEnvironmentStatus: async ({ owner, repo, id, status }) => {
+      // Validate required parameters
+      if (!owner || !repo) {
+        throw new Error('GitHub owner and repo must be provided');
+      }
+      if (!id) {
+        throw new Error('Environment ID must be provided');
+      }
+      if (!status) {
+        throw new Error('Status must be provided');
+      }
+      
       await githubApi.updateIssue({ 
         owner, 
         repo, 

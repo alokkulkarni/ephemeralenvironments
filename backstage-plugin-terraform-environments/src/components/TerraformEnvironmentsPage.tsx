@@ -61,8 +61,15 @@ export const TerraformEnvironmentsPage = () => {
     if (!projectName) missing.push(ANNOTATION_PROJECT_NAME);
     if (!orgName) missing.push(ANNOTATION_ORG_NAME);
     if (!squadName) missing.push(ANNOTATION_SQUAD_NAME);
-    if (!owner) missing.push(`${ANNOTATION_GITHUB_OWNER} or terraformEnvironments.defaultOwner`);
-    if (!repo) missing.push(`${ANNOTATION_GITHUB_REPO} or terraformEnvironments.defaultRepo`);
+    
+    // Only add GitHub owner/repo to missing list if both annotation and config are missing
+    if (!entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] && !defaultOwner) {
+      missing.push(`${ANNOTATION_GITHUB_OWNER} or terraformEnvironments.defaultOwner`);
+    }
+    if (!entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO] && !defaultRepo) {
+      missing.push(`${ANNOTATION_GITHUB_REPO} or terraformEnvironments.defaultRepo`);
+    }
+    
     return missing;
   };
 
@@ -72,6 +79,14 @@ export const TerraformEnvironmentsPage = () => {
   React.useEffect(() => {
     const fetchEnvironments = async () => {
       if (!hasRequiredConfig) {
+        setLoading(false);
+        return;
+      }
+      
+      // Additional validation to ensure owner and repo are not empty strings
+      if (!owner || !repo) {
+        console.error('Cannot fetch environments: GitHub owner or repo is empty');
+        setError(new Error('GitHub owner or repo is not configured properly'));
         setLoading(false);
         return;
       }
@@ -108,6 +123,15 @@ export const TerraformEnvironmentsPage = () => {
 
   const handleDestroy = async (id: string) => {
     if (!hasRequiredConfig) return;
+
+    // Additional validation to ensure owner and repo are not empty strings
+    if (!owner || !repo) {
+      const error = new Error('GitHub owner or repo is not configured properly');
+      console.error('Cannot destroy environment:', error);
+      setError(error);
+      errorApi.post(error);
+      return;
+    }
 
     try {
       setLoading(true);
@@ -212,6 +236,13 @@ export const TerraformEnvironmentsPage = () => {
               <strong>Organization:</strong> {orgName}<br />
               <strong>Squad:</strong> {squadName}<br />
               <strong>GitHub Repository:</strong> {owner}/{repo}
+              {(!entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] || !entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO]) && (
+                <Typography variant="caption" color="textSecondary" component="div">
+                  Using {!entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] ? 'owner' : ''} 
+                  {!entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] && !entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO] ? ' and ' : ''}
+                  {!entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO] ? 'repo' : ''} from app-config.yaml
+                </Typography>
+              )}
             </Typography>
           </InfoCard>
         )}
