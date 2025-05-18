@@ -1,14 +1,21 @@
-# Organization and Project Information
-project_name = "TestProject"
-org_name     = "TestOrg"
-squad_name   = "TestTeam"
-
-environment = "dev"
-aws_region  = "eu-west-2"
-
 # Environment Configuration
-lifetimedays = 7
-duration = 7
+environment = "dev"
+aws_region = "eu-west-2"
+
+# Project Information
+project_name = "TestProject26"
+org_name = "productsandchannel"
+squad_name = "Neptune26"
+
+# Optional Components
+enable_rds = "false"
+enable_dynamodb = "false"
+enable_s3 = "false"
+enable_elasticache = "false"
+
+# Environment life cycle duration
+lifetimeDays = "7"
+duration = ""
 
 # VPC Configuration
 vpc_cidr = "10.0.0.0/16"
@@ -17,31 +24,46 @@ private_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
 public_subnet_cidrs  = ["10.0.101.0/24", "10.0.102.0/24"]
 
 # EKS Configuration
-cluster_name    = "dev-eks-cluster"
+cluster_name = "TestProject26-dev"
 cluster_version = "1.32"
-eks_cluster_version = "1.32"
-eks_node_groups = {
-  general = {
-    desired_size    = 2
-    min_size        = 1
-    max_size        = 4
-    instance_types  = ["t3.medium"]
-  }
+node_instance_types = ["t3.medium"]
+desired_size = 2
+max_size = 4
+min_size = 1
+
+# Optional Component Configurations
+db_name = "TestProject26_dev"
+db_instance_class = "db.t3.medium"
+db_allocated_storage = 20
+
+# DynamoDB Configuration
+dynamodb_tables = {
+    "TestProject26-dev" = {
+        billing_mode = "PAY_PER_REQUEST"
+        hash_key = "id"
+        attributes = [
+        {
+            name = "id"
+            type = "S"
+        }
+        ]
+    }
 }
 
-# Optional Infrastructure Configuration
-enable_rds = false
-rds_db_name = "devdb"
-rds_username = "dbadmin"
-rds_password = "change-me-in-production"  # Change this in production!
-rds_instance_class = "db.t3.micro"
 
-enable_dynamodb = false
-dynamodb_table_name = "dev-table"
+# S3 Configuration
+s3_buckets = {
+    "TestProject26-dev" = {
+        versioning = true
+        encryption = true
+    }
+}
 
-enable_s3 = false
-s3_bucket_name = "dev-bucket"
 
-enable_elasticache = false
-elasticache_node_type = "cache.t3.micro"
-elasticache_num_nodes = 1 
+# ElastiCache Configuration
+elasticache_cluster = {
+    engine = "redis"
+    node_type = "cache.t3.micro"
+    num_cache_nodes = 1
+    port = 6379
+}
