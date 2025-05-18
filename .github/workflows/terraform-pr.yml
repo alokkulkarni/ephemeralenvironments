@@ -103,6 +103,12 @@ jobs:
           # Copy all Terraform files to the environment directory
           cp -r aws/* "${{ env.ENV_DIR }}/"
           
+          # Verify tfvars file was copied correctly
+          if [ ! -f "${{ env.ENV_DIR }}/terraform.tfvars" ]; then
+            echo "Error: terraform.tfvars not found in environment directory"
+            exit 1
+          fi
+          
           # Create backend configuration
           cat > "${{ env.ENV_DIR }}/backend.tf" <<EOF
           terraform {
@@ -133,6 +139,10 @@ jobs:
           - \`logs/plan.log\`: Terraform plan logs
           - \`logs/apply.log\`: Terraform apply logs
           EOF
+          
+          # List contents of environment directory for verification
+          echo "Contents of environment directory:"
+          ls -la "${{ env.ENV_DIR }}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -163,6 +173,12 @@ jobs:
         env:
           TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
         run: |
+          # Verify tfvars file exists before init
+          if [ ! -f "terraform.tfvars" ]; then
+            echo "Error: terraform.tfvars not found in working directory"
+            exit 1
+          fi
+          
           # First init without plugin-dir to download providers
           terraform init -upgrade -reconfigure | tee logs/init.log
           
@@ -178,12 +194,29 @@ jobs:
           TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
           TF_WORKSPACE: "default"
         run: |
+          # Verify tfvars file exists before plan
+          if [ ! -f "terraform.tfvars" ]; then
+            echo "Error: terraform.tfvars not found in working directory"
+            exit 1
+          fi
+          
+          # Verify tfvars content
+          echo "Contents of terraform.tfvars:"
+          cat terraform.tfvars
+          
+          # Run terraform plan with explicit var-file path
           terraform plan \
-            -var-file="terraform.tfvars" \
+            -var-file="./terraform.tfvars" \
             -out="plan.out" \
             -parallelism=10 \
             -refresh=true \
             | tee logs/plan.log
+          
+          # Verify plan output was created
+          if [ ! -f "plan.out" ]; then
+            echo "Error: terraform plan output file not created"
+            exit 1
+          fi
 
       - name: Terraform Apply
         working-directory: ${{ env.ENV_DIR }}
@@ -191,9 +224,22 @@ jobs:
           TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
           TF_WORKSPACE: "default"
         run: |
+          # Verify tfvars file exists before apply
+          if [ ! -f "terraform.tfvars" ]; then
+            echo "Error: terraform.tfvars not found in working directory"
+            exit 1
+          fi
+          
+          # Verify plan output exists
+          if [ ! -f "plan.out" ]; then
+            echo "Error: terraform plan output file not found"
+            exit 1
+          fi
+          
+          # Run terraform apply with explicit var-file path
           terraform apply \
             -auto-approve \
-            -var-file="terraform.tfvars" \
+            -var-file="./terraform.tfvars" \
             | tee logs/apply.log
 
       - name: Set success flag
