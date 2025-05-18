@@ -25,6 +25,22 @@ const ANNOTATION_SQUAD_NAME = 'terraform-environments/squad-name';
 const ANNOTATION_GITHUB_OWNER = 'terraform-environments/github-owner';
 const ANNOTATION_GITHUB_REPO = 'terraform-environments/github-repo';
 
+// Helper function to get config value from multiple possible paths
+const getConfigValue = (configApi: any, paths: string[]): string => {
+  for (const path of paths) {
+    try {
+      const value = configApi.getOptionalString(path);
+      if (value) {
+        console.debug(`Found config value at ${path}: ${value}`);
+        return value;
+      }
+    } catch (e) {
+      console.debug(`Config path ${path} not found or invalid`);
+    }
+  }
+  return '';
+};
+
 const useStyles = makeStyles(theme => ({
   refreshButton: {
     marginLeft: theme.spacing(2),
@@ -51,10 +67,50 @@ export const TerraformEnvironmentsPage = () => {
   const squadName = entity.metadata.annotations?.[ANNOTATION_SQUAD_NAME];
   
   // Get GitHub repository info from annotations or config
-  const defaultOwner = configApi.getOptionalString('terraformEnvironments.defaultOwner') || '';
-  const defaultRepo = configApi.getOptionalString('terraformEnvironments.defaultRepo') || '';
+  // Try multiple possible paths for owner
+  const defaultOwner = getConfigValue(configApi, [
+    'terraformEnvironments.defaultOwner',
+    'app.terraformEnvironments.defaultOwner',
+    'integration.terraformEnvironments.defaultOwner',
+    'integrations.terraformEnvironments.defaultOwner',
+    'integrations.github.0.owner',  // From GitHub integrations config
+  ]);
+
+  // Try multiple possible paths for repo
+  const defaultRepo = getConfigValue(configApi, [
+    'terraformEnvironments.defaultRepo',
+    'app.terraformEnvironments.defaultRepo',
+    'integration.terraformEnvironments.defaultRepo',
+    'integrations.terraformEnvironments.defaultRepo',
+    'integrations.github.0.repo',   // From GitHub integrations config
+  ]);
+  
   const owner = entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] || defaultOwner;
   const repo = entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO] || defaultRepo;
+  
+  // Debug logging to verify config values are loaded properly
+  console.debug('Terraform Environments Config:', {
+    fromConfig: { defaultOwner, defaultRepo },
+    fromAnnotations: {
+      owner: entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER],
+      repo: entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO],
+    },
+    finalValues: { owner, repo },
+    ownerSource: entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] ? 'annotation' : defaultOwner ? 'config' : 'missing',
+    repoSource: entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO] ? 'annotation' : defaultRepo ? 'config' : 'missing',
+  });
+
+  // Log a user-friendly message about the loaded values
+  if (owner && repo) {
+    console.log(`Terraform Environments using GitHub repository: ${owner}/${repo}`);
+    console.log(`Owner source: ${entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] ? 'annotation' : 'config'}`);
+    console.log(`Repo source: ${entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO] ? 'annotation' : 'config'}`);
+  } else {
+    console.warn('Terraform Environments missing GitHub repository configuration:',
+      !owner ? 'owner missing' : '', 
+      !repo ? 'repo missing' : ''
+    );
+  }
 
   const missingConfig = (): string[] => {
     const missing = [];
@@ -62,11 +118,11 @@ export const TerraformEnvironmentsPage = () => {
     if (!orgName) missing.push(ANNOTATION_ORG_NAME);
     if (!squadName) missing.push(ANNOTATION_SQUAD_NAME);
     
-    // Only add GitHub owner/repo to missing list if both annotation and config are missing
-    if (!entity.metadata.annotations?.[ANNOTATION_GITHUB_OWNER] && !defaultOwner) {
+    // Only add GitHub owner/repo to missing list if we don't have a value after all fallbacks
+    if (!owner) {
       missing.push(`${ANNOTATION_GITHUB_OWNER} or terraformEnvironments.defaultOwner`);
     }
-    if (!entity.metadata.annotations?.[ANNOTATION_GITHUB_REPO] && !defaultRepo) {
+    if (!repo) {
       missing.push(`${ANNOTATION_GITHUB_REPO} or terraformEnvironments.defaultRepo`);
     }
     
