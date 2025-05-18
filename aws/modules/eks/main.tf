@@ -45,6 +45,10 @@ resource "aws_eks_cluster" "main" {
   tags = merge(local.common_tags, {
     Name = var.cluster_name
   })
+
+  depends_on = [
+    aws_security_group.eks_cluster
+  ]
 }
 
 resource "aws_security_group" "eks_cluster" {
@@ -85,6 +89,32 @@ resource "aws_eks_node_group" "main" {
   })
 }
 
+# Create OIDC provider for the cluster
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]
+  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+
+  tags = merge(local.common_tags, {
+    Name = "${var.cluster_name}-oidc-provider"
+  })
+}
+
+# Update the IAM roles with the correct OIDC provider ARN
+resource "aws_iam_role_policy_attachment" "update_pod_role" {
+  role       = var.pod_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+
+  depends_on = [aws_iam_openid_connect_provider.eks]
+}
+
+resource "aws_iam_role_policy_attachment" "update_load_balancer_controller_role" {
+  role       = var.aws_load_balancer_controller_role_name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+
+  depends_on = [aws_iam_openid_connect_provider.eks]
+}
+
 # AWS Load Balancer Controller
 resource "helm_release" "aws_load_balancer_controller" {
   name       = "aws-load-balancer-controller"
@@ -100,7 +130,7 @@ resource "helm_release" "aws_load_balancer_controller" {
 
   set {
     name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = var.aws_load_balancer_controller_role_arn
+    value = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.aws_load_balancer_controller_role_name}"
   }
 
   set {
@@ -115,9 +145,13 @@ resource "helm_release" "aws_load_balancer_controller" {
 
   depends_on = [
     aws_eks_cluster.main,
-    kubernetes_service_account.aws_load_balancer_controller
+    kubernetes_service_account.aws_load_balancer_controller,
+    aws_iam_openid_connect_provider.eks
   ]
 }
+
+# Get current AWS account ID
+data "aws_caller_identity" "current" {}
 
 # Create ServiceAccount for AWS Load Balancer Controller
 resource "kubernetes_service_account" "aws_load_balancer_controller" {
@@ -125,9 +159,11 @@ resource "kubernetes_service_account" "aws_load_balancer_controller" {
     name      = "aws-load-balancer-controller"
     namespace = "kube-system"
     annotations = {
-      "eks.amazonaws.com/role-arn" = var.aws_load_balancer_controller_role_arn
+      "eks.amazonaws.com/role-arn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.aws_load_balancer_controller_role_name}"
     }
   }
+
+  depends_on = [aws_eks_cluster.main]
 }
 
 # Create IngressClass for AWS Load Balancer Controller

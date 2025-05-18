@@ -93,11 +93,11 @@ resource "aws_iam_role" "eks_pod_role" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Effect = "Allow"
         Principal = {
-          Federated = var.eks_oidc_provider_arn
+          Federated = coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder")
         }
         Condition = {
           StringEquals = {
-            "${replace(var.eks_oidc_provider_arn, "/^[^/]+/", "")}:sub" = "system:serviceaccount:default:app-service-account"
+            "${replace(coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder"), "/^[^/]+/", "")}:sub" = "system:serviceaccount:default:app-service-account"
           }
         }
       }
@@ -105,6 +105,12 @@ resource "aws_iam_role" "eks_pod_role" {
   })
 
   tags = local.common_tags
+
+  lifecycle {
+    ignore_changes = [
+      assume_role_policy
+    ]
+  }
 }
 
 # Base policy for EKS pods
@@ -341,11 +347,11 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Effect = "Allow"
         Principal = {
-          Federated = var.eks_oidc_provider_arn
+          Federated = coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder")
         }
         Condition = {
           StringEquals = {
-            "${replace(var.eks_oidc_provider_arn, "/^[^/]+/", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
+            "${replace(coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder"), "/^[^/]+/", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
           }
         }
       }
@@ -353,6 +359,12 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
   })
 
   tags = local.common_tags
+
+  lifecycle {
+    ignore_changes = [
+      assume_role_policy
+    ]
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "aws_load_balancer_controller" {
