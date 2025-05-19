@@ -14,16 +14,4 @@ terraform {
       version = "~> 2.12"
     }
   }
-}
-
-# Declare that this module requires kubernetes and helm providers
-terraform {
-  required_providers {
-    kubernetes = {
-      source = "hashicorp/kubernetes"
-    }
-    helm = {
-      source = "hashicorp/helm"
-    }
-  }
 } 
