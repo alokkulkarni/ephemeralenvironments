@@ -109,10 +109,8 @@ module "eks" {
   cluster_role_arn = module.iam.eks_cluster_role_arn
   node_role_arn    = module.iam.eks_node_group_role_arn
 
-  aws_load_balancer_controller_role_arn  = module.iam.aws_load_balancer_controller_role_arn
-  aws_load_balancer_controller_role_name = "${var.environment}-aws-load-balancer-controller-role"
-  pod_role_name                          = "${var.environment}-eks-pod-role"
-  aws_region                             = var.aws_region
+  aws_load_balancer_controller_role_arn = module.iam.aws_load_balancer_controller_role_arn
+  aws_region                            = var.aws_region
 
   node_groups = var.eks_node_groups
 
@@ -125,8 +123,10 @@ module "eks" {
 # Update IAM roles with OIDC provider ARN after EKS cluster is created
 resource "aws_iam_role_policy" "update_oidc_provider" {
   for_each = {
-    pod_role = module.iam.eks_pod_role_name
-    alb_role = module.iam.aws_load_balancer_controller_role_name
+    for k, v in {
+      pod_role = module.iam.eks_pod_role_name
+      alb_role = module.iam.aws_load_balancer_controller_role_name
+    } : k => v if v != null
   }
 
   name = "update-oidc-provider"

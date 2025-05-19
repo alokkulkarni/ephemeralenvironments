@@ -84,28 +84,16 @@ resource "aws_iam_openid_connect_provider" "eks" {
   })
 }
 
-# Update the IAM roles with the correct OIDC provider ARN
-resource "aws_iam_role_policy_attachment" "update_pod_role" {
-  role       = var.pod_role_name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-
-  depends_on = [aws_iam_openid_connect_provider.eks]
-}
-
-resource "aws_iam_role_policy_attachment" "update_load_balancer_controller_role" {
-  role       = var.aws_load_balancer_controller_role_name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-
-  depends_on = [aws_iam_openid_connect_provider.eks]
-}
-
 # Create ServiceAccount for AWS Load Balancer Controller
 resource "kubernetes_service_account" "aws_load_balancer_controller" {
   metadata {
     name      = "aws-load-balancer-controller"
     namespace = "kube-system"
     annotations = {
-      "eks.amazonaws.com/role-arn" = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.aws_load_balancer_controller_role_name}"
+      "eks.amazonaws.com/role-arn" = var.aws_load_balancer_controller_role_arn
+    }
+    labels = {
+      "app.kubernetes.io/managed-by" = "Helm"
     }
   }
 
@@ -113,6 +101,13 @@ resource "kubernetes_service_account" "aws_load_balancer_controller" {
     aws_eks_cluster.main,
     aws_eks_node_group.main
   ]
+
+  lifecycle {
+    replace_triggered_by = [
+      aws_eks_cluster.main,
+      aws_eks_node_group.main
+    ]
+  }
 }
 
 # Create IngressClass for AWS Load Balancer Controller
@@ -121,6 +116,13 @@ resource "kubernetes_ingress_class_v1" "alb" {
     name = "alb"
     annotations = {
       "ingressclass.kubernetes.io/is-default-class" = "true"
+      "meta.helm.sh/release-name"                   = "aws-load-balancer-controller"
+      "meta.helm.sh/release-namespace"              = "kube-system"
+    }
+    labels = {
+      "app.kubernetes.io/managed-by" = "Helm"
+      "app.kubernetes.io/name"       = "aws-load-balancer-controller"
+      "helm.sh/chart"               = "aws-load-balancer-controller"
     }
   }
   spec {
@@ -132,6 +134,13 @@ resource "kubernetes_ingress_class_v1" "alb" {
     aws_eks_node_group.main,
     kubernetes_service_account.aws_load_balancer_controller
   ]
+
+  lifecycle {
+    replace_triggered_by = [
+      aws_eks_cluster.main,
+      aws_eks_node_group.main
+    ]
+  }
 }
 
 # AWS Load Balancer Controller
@@ -148,8 +157,13 @@ resource "helm_release" "aws_load_balancer_controller" {
   }
 
   set {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.aws_load_balancer_controller_role_name}"
+    name  = "serviceAccount.create"
+    value = "false"
+  }
+
+  set {
+    name  = "serviceAccount.name"
+    value = kubernetes_service_account.aws_load_balancer_controller.metadata[0].name
   }
 
   set {
@@ -168,6 +182,12 @@ resource "helm_release" "aws_load_balancer_controller" {
     kubernetes_service_account.aws_load_balancer_controller,
     kubernetes_ingress_class_v1.alb
   ]
+
+  lifecycle {
+    replace_triggered_by = [
+      kubernetes_service_account.aws_load_balancer_controller
+    ]
+  }
 }
 
 # Get current AWS account ID

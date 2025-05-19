@@ -61,16 +61,19 @@ variable "node_role_arn" {
 variable "aws_load_balancer_controller_role_arn" {
   description = "ARN of the IAM role for AWS Load Balancer Controller"
   type        = string
+  default     = null
 }
 
 variable "aws_load_balancer_controller_role_name" {
   description = "Name of the IAM role for AWS Load Balancer Controller"
   type        = string
+  default     = null
 }
 
 variable "pod_role_name" {
   description = "Name of the IAM role for EKS pods"
   type        = string
+  default     = null
 }
 
 variable "aws_region" {
