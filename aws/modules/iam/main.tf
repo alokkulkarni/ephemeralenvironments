@@ -12,8 +12,8 @@ locals {
   # Get current timestamp in ISO 8601 format
   timestamp = formatdate("YYYY-MM-DD'T'HH:mm:ssZ", timestamp())
   
-  # Create a unique name prefix for all resources
-  name_prefix = "${var.project_name}-${var.org_name}-${var.squad_name}-${var.environment}"
+  # Create a shorter name prefix for all resources (max 32 chars)
+  name_prefix = substr("${var.project_name}-${var.org_name}-${var.squad_name}-${var.environment}", 0, 32)
   
   common_tags = {
     Environment  = var.environment
@@ -27,7 +27,7 @@ locals {
 
 # EKS Cluster Role
 resource "aws_iam_role" "eks_cluster" {
-  name = "${local.name_prefix}-eks-cluster-role"
+  name = "${local.name_prefix}-eks-cluster"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -52,7 +52,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 
 # EKS Node Group Role
 resource "aws_iam_role" "eks_node_group" {
-  name = "${local.name_prefix}-eks-node-group-role"
+  name = "${local.name_prefix}-eks-node"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -85,9 +85,10 @@ resource "aws_iam_role_policy_attachment" "eks_container_registry_readonly" {
   role       = aws_iam_role.eks_node_group.name
 }
 
-# Application Role for EKS Pods
+# Application Role for EKS Pods - Only create if eks_oidc_provider_arn is provided
 resource "aws_iam_role" "eks_pod_role" {
-  name = "${local.name_prefix}-eks-pod-role"
+  count = var.eks_oidc_provider_arn != null ? 1 : 0
+  name  = "${local.name_prefix}-eks-pod"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -110,9 +111,10 @@ resource "aws_iam_role" "eks_pod_role" {
   tags = local.common_tags
 }
 
-# Base policy for EKS pods
+# Base policy for EKS pods - Only create if eks_oidc_provider_arn is provided
 resource "aws_iam_policy" "eks_pod_base_policy" {
-  name = "${local.name_prefix}-eks-pod-base-policy"
+  count = var.eks_oidc_provider_arn != null ? 1 : 0
+  name  = "${local.name_prefix}-eks-pod-base"
   description = "Base policy for EKS pods in ${local.name_prefix}"
 
   policy = jsonencode({
@@ -143,8 +145,9 @@ resource "aws_iam_policy" "eks_pod_base_policy" {
 }
 
 resource "aws_iam_role_policy_attachment" "eks_pod_base_policy" {
-  policy_arn = aws_iam_policy.eks_pod_base_policy.arn
-  role       = aws_iam_role.eks_pod_role.name
+  count      = var.eks_oidc_provider_arn != null ? 1 : 0
+  policy_arn = aws_iam_policy.eks_pod_base_policy[0].arn
+  role       = aws_iam_role.eks_pod_role[0].name
 }
 
 # Optional Infrastructure Policies
@@ -332,34 +335,35 @@ resource "aws_iam_policy" "elasticache_access" {
   tags = local.common_tags
 }
 
-# Attach optional policies to EKS pod role if enabled
+# Attach optional policies to EKS pod role if enabled and eks_oidc_provider_arn is provided
 resource "aws_iam_role_policy_attachment" "rds_access" {
-  count      = var.enable_rds ? 1 : 0
+  count      = var.enable_rds && var.eks_oidc_provider_arn != null ? 1 : 0
   policy_arn = aws_iam_policy.rds_access[0].arn
-  role       = aws_iam_role.eks_pod_role.name
+  role       = aws_iam_role.eks_pod_role[0].name
 }
 
 resource "aws_iam_role_policy_attachment" "dynamodb_access" {
-  count      = var.enable_dynamodb ? 1 : 0
+  count      = var.enable_dynamodb && var.eks_oidc_provider_arn != null ? 1 : 0
   policy_arn = aws_iam_policy.dynamodb_access[0].arn
-  role       = aws_iam_role.eks_pod_role.name
+  role       = aws_iam_role.eks_pod_role[0].name
 }
 
 resource "aws_iam_role_policy_attachment" "s3_access" {
-  count      = var.enable_s3 ? 1 : 0
+  count      = var.enable_s3 && var.eks_oidc_provider_arn != null ? 1 : 0
   policy_arn = aws_iam_policy.s3_access[0].arn
-  role       = aws_iam_role.eks_pod_role.name
+  role       = aws_iam_role.eks_pod_role[0].name
 }
 
 resource "aws_iam_role_policy_attachment" "elasticache_access" {
-  count      = var.enable_elasticache ? 1 : 0
+  count      = var.enable_elasticache && var.eks_oidc_provider_arn != null ? 1 : 0
   policy_arn = aws_iam_policy.elasticache_access[0].arn
-  role       = aws_iam_role.eks_pod_role.name
+  role       = aws_iam_role.eks_pod_role[0].name
 }
 
-# AWS Load Balancer Controller Policy
+# AWS Load Balancer Controller Policy - Only create if eks_oidc_provider_arn is provided
 resource "aws_iam_policy" "aws_load_balancer_controller" {
-  name = "${local.name_prefix}-aws-load-balancer-controller-policy"
+  count = var.eks_oidc_provider_arn != null ? 1 : 0
+  name  = "${local.name_prefix}-alb-controller"
   description = "Policy for AWS Load Balancer Controller in ${local.name_prefix}"
 
   policy = jsonencode({
@@ -569,9 +573,10 @@ resource "aws_iam_policy" "aws_load_balancer_controller" {
   tags = local.common_tags
 }
 
-# AWS Load Balancer Controller Role
+# AWS Load Balancer Controller Role - Only create if eks_oidc_provider_arn is provided
 resource "aws_iam_role" "aws_load_balancer_controller" {
-  name = "${local.name_prefix}-aws-load-balancer-controller-role"
+  count = var.eks_oidc_provider_arn != null ? 1 : 0
+  name  = "${local.name_prefix}-alb-controller"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -595,6 +600,7 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
 }
 
 resource "aws_iam_role_policy_attachment" "aws_load_balancer_controller" {
-  policy_arn = aws_iam_policy.aws_load_balancer_controller.arn
-  role       = aws_iam_role.aws_load_balancer_controller.name
+  count      = var.eks_oidc_provider_arn != null ? 1 : 0
+  policy_arn = aws_iam_policy.aws_load_balancer_controller[0].arn
+  role       = aws_iam_role.aws_load_balancer_controller[0].name
 } 
