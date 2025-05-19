@@ -1,5 +1,8 @@
 {
   "devDependencies": {
     "@types/jest": "^29.5.14"
+  },
+  "dependencies": {
+    "backstage-cli": "^1.0.0-alpha.2"
   }
 }

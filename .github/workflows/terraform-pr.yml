@@ -598,7 +598,7 @@ jobs:
               });
               
               // Upload the zip file as a release asset
-              await github.rest.repos.uploadReleaseAsset({
+              const asset = await github.rest.repos.uploadReleaseAsset({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: release.data.id,
@@ -609,8 +609,29 @@ jobs:
                 }
               });
               
-              // Update issue with download link
-              const downloadUrl = release.data.assets[0].browser_download_url;
+              // Get the download URL from the uploaded asset
+              let downloadUrl = '';
+              
+              // First try to get it directly from the asset response
+              if (asset.data && asset.data.browser_download_url) {
+                downloadUrl = asset.data.browser_download_url;
+              } else {
+                // If not available, fetch the release again to get the updated assets
+                const updatedRelease = await github.rest.repos.getRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: release.data.id
+                });
+                
+                // Find our asset in the release
+                const envAsset = updatedRelease.data.assets.find(a => a.name === 'environment.zip');
+                if (envAsset && envAsset.browser_download_url) {
+                  downloadUrl = envAsset.browser_download_url;
+                } else {
+                  // Still not found, use a generic URL as fallback
+                  downloadUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/env-${context.issue.number}`;
+                }
+              }
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -644,7 +665,22 @@ jobs:
               }
             } catch (error) {
               console.error('Error attaching environment zip:', error);
-              core.setFailed(`Failed to attach environment zip: ${error.message}`);
+              
+              // Log detailed information about the error
+              if (error.response) {
+                console.error(`GitHub API Error: ${error.response.status} - ${error.response.data.message}`);
+              }
+              
+              // Add a comment to the issue about the failure
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: `## Warning: Environment Files ⚠️\n\nThere was an issue attaching the environment zip file to this issue. The environment was created successfully, but you'll need to download the artifacts from the GitHub Actions run.\n\nError details: ${error.message}`
+              });
+              
+              // Don't fail the whole workflow for this non-critical step
+              console.log('Continuing despite zip attachment error');
             }
 
       - name: Update Issue Status - Complete
