@@ -1,7 +1,7 @@
 # Organization and Project Information
-project_name = "test-project"
-org_name     = "test-org"
-squad_name   = "test-squad"
+project_name = "paymentsapi"
+org_name     = "productsandchannel"
+squad_name   = "paymentsquad"
 
 environment = "dev"
 aws_region  = "eu-west-2"
