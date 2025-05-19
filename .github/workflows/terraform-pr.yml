@@ -437,13 +437,21 @@ jobs:
             exit 1
           fi
           
-          # Run terraform plan
+          # Run terraform plan with auto-generated password for RDS
+          # Generate a secure random password for RDS
+          RDS_PASSWORD=$(openssl rand -base64 16)
+          
+          # Run terraform plan with the password provided
           terraform plan \
             -var-file="./terraform.tfvars" \
+            -var="rds_password=${RDS_PASSWORD}" \
             -out="plan.out" \
             -parallelism=10 \
             -refresh=true \
             | tee logs/plan.log
+            
+          # Save the password securely for apply step
+          echo "RDS_PASSWORD=${RDS_PASSWORD}" >> "$GITHUB_ENV"
           
           # Check plan status
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
@@ -523,11 +531,15 @@ jobs:
             exit 1
           fi
           
-          # Run terraform apply
+          # Run terraform apply (using the plan output)
+          # Note: The RDS password is already included in the plan output
           terraform apply \
             -auto-approve \
             "plan.out" \
             | tee logs/apply.log
+            
+          # Store the RDS password in a secure file for later reference
+          echo "RDS Password: ${RDS_PASSWORD}" > logs/rds_credentials.txt
           
           # Check apply status
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
@@ -632,11 +644,22 @@ jobs:
                   downloadUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/env-${context.issue.number}`;
                 }
               }
+              // Read the RDS credentials file if it exists
+              let rdsCredentials = '';
+              try {
+                const credentialsPath = `${process.env.ENV_DIR}/logs/rds_credentials.txt`;
+                if (fs.existsSync(credentialsPath)) {
+                  rdsCredentials = fs.readFileSync(credentialsPath, 'utf8');
+                }
+              } catch (error) {
+                console.log('No RDS credentials file found, continuing');
+              }
+              
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: `## Environment Files 📦\n\nEnvironment files are available for download:\n\n[Download Environment Files](${downloadUrl})\n\nThis zip file contains all the necessary files to manage this environment, including:\n- Terraform configuration files\n- Variable files\n- State files\n- Logs\n\nKeep this file safe as it will be needed for environment destruction.`
+                body: `## Environment Files 📦\n\nEnvironment files are available for download:\n\n[Download Environment Files](${downloadUrl})\n\nThis zip file contains all the necessary files to manage this environment, including:\n- Terraform configuration files\n- Variable files\n- State files\n- Logs\n\nKeep this file safe as it will be needed for environment destruction.${rdsCredentials ? `\n\n## Sensitive Environment Credentials\n\n\`\`\`\n${rdsCredentials}\n\`\`\`\n\nPlease store these credentials securely.` : ''}`
               });
               
               // Update metadata to include download URL
@@ -711,7 +734,10 @@ jobs:
                 type: environment,
                 created_at: new Date().toISOString(),
                 pr_number: context.issue.number,
-                status: 'active'
+                status: 'active',
+                credentials: {
+                  rds_password: process.env.RDS_PASSWORD || 'no_password_available'
+                }
               }
             };
             
