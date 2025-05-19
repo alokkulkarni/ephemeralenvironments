@@ -140,17 +140,73 @@ jobs:
         working-directory: ${{ env.ENV_DIR }}
         continue-on-error: false
         run: |
-          # Run terraform destroy
-          terraform destroy \
-            -auto-approve \
-            -var-file="./terraform.tfvars" \
-            | tee logs/destroy.log
+          # Function to attempt terraform destroy
+          attempt_destroy() {
+            echo "Attempting terraform destroy (Attempt $1)..."
+            terraform destroy \
+              -auto-approve \
+              -var-file="./terraform.tfvars" \
+              | tee "logs/destroy-attempt-$1.log"
+            
+            return ${PIPESTATUS[0]}
+          }
           
-          # Check destroy status
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Error: Terraform destroy failed"
-            exit 1
+          # Initialize attempt counter
+          ATTEMPT=1
+          MAX_ATTEMPTS=3
+          RETRY_DELAY=30  # seconds
+          
+          # First attempt
+          if ! attempt_destroy $ATTEMPT; then
+            echo "Destroy attempt $ATTEMPT failed. Waiting $RETRY_DELAY seconds before retry..."
+            sleep $RETRY_DELAY
+            
+            # Second attempt
+            ATTEMPT=$((ATTEMPT + 1))
+            if ! attempt_destroy $ATTEMPT; then
+              echo "Destroy attempt $ATTEMPT failed. Waiting $RETRY_DELAY seconds before final retry..."
+              sleep $RETRY_DELAY
+              
+              # Final attempt
+              ATTEMPT=$((ATTEMPT + 1))
+              if ! attempt_destroy $ATTEMPT; then
+                echo "All destroy attempts failed after $MAX_ATTEMPTS tries"
+                exit 1
+              fi
+            fi
           fi
+          
+          # Combine all destroy logs into a single file
+          cat logs/destroy-attempt-*.log > logs/destroy.log
+          
+          # Clean up individual attempt logs
+          rm logs/destroy-attempt-*.log
+          
+          echo "Terraform destroy completed successfully after $ATTEMPT attempt(s)"
+
+      - name: Attach Destroy Logs to Issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              const fs = require('fs');
+              const destroyLogContent = fs.readFileSync('${{ env.ENV_DIR }}/logs/destroy.log', 'utf8');
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+                body: `## Terraform Destroy Logs
+                
+                \`\`\`
+                ${destroyLogContent}
+                \`\`\`
+                `
+              });
+            } catch (error) {
+              console.error('Error attaching destroy logs:', error);
+            }
 
       - name: Cleanup Environment Files
         if: always()
