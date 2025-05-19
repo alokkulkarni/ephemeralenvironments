@@ -12,6 +12,9 @@ locals {
   # Get current timestamp in ISO 8601 format
   timestamp = formatdate("YYYY-MM-DD'T'HH:mm:ssZ", timestamp())
   
+  # Create a unique name prefix for all resources
+  name_prefix = "${var.project_name}-${var.org_name}-${var.squad_name}-${var.environment}"
+  
   common_tags = {
     Environment  = var.environment
     Project      = var.project_name
@@ -24,7 +27,7 @@ locals {
 
 # EKS Cluster Role
 resource "aws_iam_role" "eks_cluster" {
-  name = "${var.environment}-eks-cluster-role"
+  name = "${local.name_prefix}-eks-cluster-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -49,7 +52,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 
 # EKS Node Group Role
 resource "aws_iam_role" "eks_node_group" {
-  name = "${var.environment}-eks-node-group-role"
+  name = "${local.name_prefix}-eks-node-group-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -84,7 +87,7 @@ resource "aws_iam_role_policy_attachment" "eks_container_registry_readonly" {
 
 # Application Role for EKS Pods
 resource "aws_iam_role" "eks_pod_role" {
-  name = "${var.environment}-eks-pod-role"
+  name = "${local.name_prefix}-eks-pod-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -93,11 +96,11 @@ resource "aws_iam_role" "eks_pod_role" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Effect = "Allow"
         Principal = {
-          Federated = coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder")
+          Federated = var.eks_oidc_provider_arn
         }
         Condition = {
           StringEquals = {
-            "${replace(coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder"), "/^[^/]+/", "")}:sub" = "system:serviceaccount:default:app-service-account"
+            "${replace(var.eks_oidc_provider_arn, "/^[^/]+/", "")}:sub" = "system:serviceaccount:default:app-service-account"
           }
         }
       }
@@ -105,17 +108,12 @@ resource "aws_iam_role" "eks_pod_role" {
   })
 
   tags = local.common_tags
-
-  lifecycle {
-    ignore_changes = [
-      assume_role_policy
-    ]
-  }
 }
 
 # Base policy for EKS pods
 resource "aws_iam_policy" "eks_pod_base_policy" {
-  name = "${var.environment}-eks-pod-base-policy"
+  name = "${local.name_prefix}-eks-pod-base-policy"
+  description = "Base policy for EKS pods in ${local.name_prefix}"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -126,7 +124,15 @@ resource "aws_iam_policy" "eks_pod_base_policy" {
           "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage"
+          "ecr:GetRepositoryPolicy",
+          "ecr:DescribeRepositories",
+          "ecr:ListImages",
+          "ecr:DescribeImages",
+          "ecr:BatchGetImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:PutImage"
         ]
         Resource = "*"
       }
@@ -145,7 +151,8 @@ resource "aws_iam_role_policy_attachment" "eks_pod_base_policy" {
 # RDS Policy
 resource "aws_iam_policy" "rds_access" {
   count = var.enable_rds ? 1 : 0
-  name  = "${var.environment}-rds-access-policy"
+  name  = "${local.name_prefix}-rds-access-policy"
+  description = "Policy for RDS access in ${local.name_prefix}"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -153,14 +160,22 @@ resource "aws_iam_policy" "rds_access" {
       {
         Effect = "Allow"
         Action = [
-          "rds-db:connect",
           "rds:DescribeDBInstances",
-          "rds:DescribeDBClusters"
+          "rds:DescribeDBClusters",
+          "rds:DescribeDBParameterGroups",
+          "rds:DescribeDBParameters",
+          "rds:DescribeDBSecurityGroups",
+          "rds:DescribeDBSnapshots",
+          "rds:DescribeDBSubnetGroups",
+          "rds:DescribeEventSubscriptions",
+          "rds:DescribeEvents",
+          "rds:DescribeOptionGroups",
+          "rds:DescribeOrderableDBInstanceOptions",
+          "rds:DescribePendingMaintenanceActions",
+          "rds:DescribeReservedDBInstances",
+          "rds:DescribeReservedDBInstancesOfferings"
         ]
-        Resource = [
-          "arn:aws:rds:${var.aws_region}:${var.aws_account_id}:db:${var.environment}-rds",
-          "arn:aws:rds-db:${var.aws_region}:${var.aws_account_id}:dbuser:${var.environment}-rds/*"
-        ]
+        Resource = "*"
       }
     ]
   })
@@ -171,7 +186,8 @@ resource "aws_iam_policy" "rds_access" {
 # DynamoDB Policy
 resource "aws_iam_policy" "dynamodb_access" {
   count = var.enable_dynamodb ? 1 : 0
-  name  = "${var.environment}-dynamodb-access-policy"
+  name  = "${local.name_prefix}-dynamodb-access-policy"
+  description = "Policy for DynamoDB access in ${local.name_prefix}"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -181,17 +197,19 @@ resource "aws_iam_policy" "dynamodb_access" {
         Action = [
           "dynamodb:BatchGetItem",
           "dynamodb:BatchWriteItem",
+          "dynamodb:CreateTable",
           "dynamodb:DeleteItem",
+          "dynamodb:DeleteTable",
+          "dynamodb:DescribeTable",
           "dynamodb:GetItem",
+          "dynamodb:ListTables",
           "dynamodb:PutItem",
           "dynamodb:Query",
           "dynamodb:Scan",
-          "dynamodb:UpdateItem"
+          "dynamodb:UpdateItem",
+          "dynamodb:UpdateTable"
         ]
-        Resource = [
-          "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/${var.environment}-table",
-          "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/${var.environment}-table/index/*"
-        ]
+        Resource = "*"
       }
     ]
   })
@@ -202,7 +220,8 @@ resource "aws_iam_policy" "dynamodb_access" {
 # S3 Policy
 resource "aws_iam_policy" "s3_access" {
   count = var.enable_s3 ? 1 : 0
-  name  = "${var.environment}-s3-access-policy"
+  name  = "${local.name_prefix}-s3-access-policy"
+  description = "Policy for S3 access in ${local.name_prefix}"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -210,15 +229,70 @@ resource "aws_iam_policy" "s3_access" {
       {
         Effect = "Allow"
         Action = [
+          "s3:ListBucket",
           "s3:GetObject",
           "s3:PutObject",
           "s3:DeleteObject",
-          "s3:ListBucket"
+          "s3:GetBucketLocation",
+          "s3:ListAllMyBuckets",
+          "s3:GetBucketAcl",
+          "s3:GetBucketPolicy",
+          "s3:GetBucketVersioning",
+          "s3:GetLifecycleConfiguration",
+          "s3:GetBucketTagging",
+          "s3:GetBucketWebsite",
+          "s3:GetBucketNotification",
+          "s3:GetBucketLogging",
+          "s3:GetBucketCORS",
+          "s3:GetBucketRequestPayment",
+          "s3:GetBucketPublicAccessBlock",
+          "s3:GetBucketOwnershipControls",
+          "s3:GetBucketEncryption",
+          "s3:GetBucketIntelligentTieringConfiguration",
+          "s3:GetBucketInventoryConfiguration",
+          "s3:GetBucketMetricsConfiguration",
+          "s3:GetBucketReplication",
+          "s3:GetBucketVersioning",
+          "s3:GetBucketWebsite",
+          "s3:GetObjectAcl",
+          "s3:GetObjectLegalHold",
+          "s3:GetObjectLockConfiguration",
+          "s3:GetObjectRetention",
+          "s3:GetObjectTagging",
+          "s3:GetObjectTorrent",
+          "s3:GetObjectVersion",
+          "s3:GetObjectVersionAcl",
+          "s3:GetObjectVersionForReplication",
+          "s3:GetObjectVersionTagging",
+          "s3:GetObjectVersionTorrent",
+          "s3:GetReplicationConfiguration",
+          "s3:ListBucketMultipartUploads",
+          "s3:ListBucketVersions",
+          "s3:ListMultipartUploadParts",
+          "s3:PutBucketAcl",
+          "s3:PutBucketCORS",
+          "s3:PutBucketLogging",
+          "s3:PutBucketNotification",
+          "s3:PutBucketOwnershipControls",
+          "s3:PutBucketPolicy",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutBucketRequestPayment",
+          "s3:PutBucketTagging",
+          "s3:PutBucketVersioning",
+          "s3:PutBucketWebsite",
+          "s3:PutObjectAcl",
+          "s3:PutObjectLegalHold",
+          "s3:PutObjectLockConfiguration",
+          "s3:PutObjectRetention",
+          "s3:PutObjectTagging",
+          "s3:PutObjectVersionTagging",
+          "s3:PutReplicationConfiguration",
+          "s3:ReplicateDelete",
+          "s3:ReplicateObject",
+          "s3:ReplicateTags",
+          "s3:RestoreObject"
         ]
-        Resource = [
-          "arn:aws:s3:::${var.environment}-bucket",
-          "arn:aws:s3:::${var.environment}-bucket/*"
-        ]
+        Resource = "*"
       }
     ]
   })
@@ -229,7 +303,8 @@ resource "aws_iam_policy" "s3_access" {
 # ElastiCache Policy
 resource "aws_iam_policy" "elasticache_access" {
   count = var.enable_elasticache ? 1 : 0
-  name  = "${var.environment}-elasticache-access-policy"
+  name  = "${local.name_prefix}-elasticache-access-policy"
+  description = "Policy for ElastiCache access in ${local.name_prefix}"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -237,13 +312,19 @@ resource "aws_iam_policy" "elasticache_access" {
       {
         Effect = "Allow"
         Action = [
-          "elasticache:DescribeReplicationGroups",
           "elasticache:DescribeCacheClusters",
+          "elasticache:DescribeCacheParameterGroups",
+          "elasticache:DescribeCacheParameters",
+          "elasticache:DescribeCacheSecurityGroups",
+          "elasticache:DescribeCacheSubnetGroups",
+          "elasticache:DescribeEvents",
+          "elasticache:DescribeReplicationGroups",
+          "elasticache:DescribeReservedCacheNodes",
+          "elasticache:DescribeReservedCacheNodesOfferings",
+          "elasticache:DescribeSnapshots",
           "elasticache:ListTagsForResource"
         ]
-        Resource = [
-          "arn:aws:elasticache:${var.aws_region}:${var.aws_account_id}:replicationgroup:${var.environment}-redis"
-        ]
+        Resource = "*"
       }
     ]
   })
@@ -278,7 +359,8 @@ resource "aws_iam_role_policy_attachment" "elasticache_access" {
 
 # AWS Load Balancer Controller Policy
 resource "aws_iam_policy" "aws_load_balancer_controller" {
-  name = "${var.environment}-aws-load-balancer-controller-policy"
+  name = "${local.name_prefix}-aws-load-balancer-controller-policy"
+  description = "Policy for AWS Load Balancer Controller in ${local.name_prefix}"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -308,25 +390,176 @@ resource "aws_iam_policy" "aws_load_balancer_controller" {
           "elasticloadbalancing:DescribeTargetGroups",
           "elasticloadbalancing:DescribeTargetGroupAttributes",
           "elasticloadbalancing:DescribeTargetHealth",
-          "elasticloadbalancing:DescribeTags",
+          "elasticloadbalancing:DescribeTags"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:DescribeUserPoolClient",
+          "acm:ListCertificates",
+          "acm:DescribeCertificate",
+          "iam:ListServerCertificates",
+          "iam:GetServerCertificate",
+          "waf-regional:GetWebACL",
+          "waf-regional:GetWebACLForResource",
+          "waf-regional:AssociateWebACL",
+          "waf-regional:DisassociateWebACL",
+          "wafv2:GetWebACL",
+          "wafv2:GetWebACLForResource",
+          "wafv2:AssociateWebACL",
+          "wafv2:DisassociateWebACL",
+          "shield:GetSubscriptionState",
+          "shield:DescribeProtection",
+          "shield:CreateProtection",
+          "shield:DeleteProtection"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:RevokeSecurityGroupIngress"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateSecurityGroup"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateTags"
+        ]
+        Resource = "arn:aws:ec2:*:*:security-group/*"
+        Condition = {
+          StringEquals = {
+            "ec2:CreateAction" = "CreateSecurityGroup"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateTags",
+          "ec2:DeleteTags"
+        ]
+        Resource = "arn:aws:ec2:*:*:security-group/*"
+        Condition = {
+          Null = {
+            "aws:RequestTag/elbv2.k8s.aws/cluster" = "false"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:RevokeSecurityGroupIngress",
+          "ec2:DeleteSecurityGroup"
+        ]
+        Resource = "*"
+        Condition = {
+          Null = {
+            "aws:ResourceTag/elbv2.k8s.aws/cluster" = "false"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "elasticloadbalancing:CreateLoadBalancer",
-          "elasticloadbalancing:CreateTargetGroup",
+          "elasticloadbalancing:CreateTargetGroup"
+        ]
+        Resource = "*"
+        Condition = {
+          Null = {
+            "aws:RequestTag/elbv2.k8s.aws/cluster" = "false"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "elasticloadbalancing:CreateListener",
-          "elasticloadbalancing:DeleteLoadBalancer",
-          "elasticloadbalancing:DeleteTargetGroup",
           "elasticloadbalancing:DeleteListener",
+          "elasticloadbalancing:CreateRule",
+          "elasticloadbalancing:DeleteRule"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:AddTags",
+          "elasticloadbalancing:RemoveTags"
+        ]
+        Resource = [
+          "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
+          "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
+          "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*"
+        ]
+        Condition = {
+          Null = {
+            "aws:RequestTag/elbv2.k8s.aws/cluster" = "false",
+            "aws:ResourceTag/elbv2.k8s.aws/cluster" = "false"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:AddTags",
+          "elasticloadbalancing:RemoveTags"
+        ]
+        Resource = [
+          "arn:aws:elasticloadbalancing:*:*:listener/net/*/*/*",
+          "arn:aws:elasticloadbalancing:*:*:listener/app/*/*/*",
+          "arn:aws:elasticloadbalancing:*:*:listener-rule/net/*/*/*",
+          "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "elasticloadbalancing:ModifyLoadBalancerAttributes",
-          "elasticloadbalancing:ModifyTargetGroup",
-          "elasticloadbalancing:ModifyTargetGroupAttributes",
           "elasticloadbalancing:SetIpAddressType",
           "elasticloadbalancing:SetSecurityGroups",
           "elasticloadbalancing:SetSubnets",
-          "elasticloadbalancing:AddTags",
-          "elasticloadbalancing:RemoveTags",
+          "elasticloadbalancing:DeleteLoadBalancer",
+          "elasticloadbalancing:ModifyTargetGroup",
+          "elasticloadbalancing:ModifyTargetGroupAttributes",
+          "elasticloadbalancing:DeleteTargetGroup"
+        ]
+        Resource = "*"
+        Condition = {
+          Null = {
+            "aws:ResourceTag/elbv2.k8s.aws/cluster" = "false"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:RegisterTargets",
+          "elasticloadbalancing:DeregisterTargets"
+        ]
+        Resource = "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticloadbalancing:SetWebAcl",
           "elasticloadbalancing:ModifyListener",
           "elasticloadbalancing:AddListenerCertificates",
           "elasticloadbalancing:RemoveListenerCertificates",
-          "elasticloadbalancing:SetRulePriorities"
+          "elasticloadbalancing:ModifyRule"
         ]
         Resource = "*"
       }
@@ -338,7 +571,7 @@ resource "aws_iam_policy" "aws_load_balancer_controller" {
 
 # AWS Load Balancer Controller Role
 resource "aws_iam_role" "aws_load_balancer_controller" {
-  name = "${var.environment}-aws-load-balancer-controller-role"
+  name = "${local.name_prefix}-aws-load-balancer-controller-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -347,11 +580,11 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
         Action = "sts:AssumeRoleWithWebIdentity"
         Effect = "Allow"
         Principal = {
-          Federated = coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder")
+          Federated = var.eks_oidc_provider_arn
         }
         Condition = {
           StringEquals = {
-            "${replace(coalesce(var.eks_oidc_provider_arn, "arn:aws:iam::${var.aws_account_id}:oidc-provider/placeholder"), "/^[^/]+/", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
+            "${replace(var.eks_oidc_provider_arn, "/^[^/]+/", "")}:sub" = "system:serviceaccount:kube-system:aws-load-balancer-controller"
           }
         }
       }
@@ -359,15 +592,35 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
   })
 
   tags = local.common_tags
-
-  lifecycle {
-    ignore_changes = [
-      assume_role_policy
-    ]
-  }
 }
 
 resource "aws_iam_role_policy_attachment" "aws_load_balancer_controller" {
   policy_arn = aws_iam_policy.aws_load_balancer_controller.arn
   role       = aws_iam_role.aws_load_balancer_controller.name
+}
+
+# Outputs
+output "eks_cluster_role_arn" {
+  description = "ARN of the EKS cluster role"
+  value       = aws_iam_role.eks_cluster.arn
+}
+
+output "eks_node_group_role_arn" {
+  description = "ARN of the EKS node group role"
+  value       = aws_iam_role.eks_node_group.arn
+}
+
+output "eks_pod_role_name" {
+  description = "Name of the EKS pod role"
+  value       = aws_iam_role.eks_pod_role.name
+}
+
+output "aws_load_balancer_controller_role_arn" {
+  description = "ARN of the AWS Load Balancer Controller role"
+  value       = aws_iam_role.aws_load_balancer_controller.arn
+}
+
+output "aws_load_balancer_controller_role_name" {
+  description = "Name of the AWS Load Balancer Controller role"
+  value       = aws_iam_role.aws_load_balancer_controller.name
 } 

@@ -17,54 +17,12 @@ jobs:
       issues: write
     env:
       TF_IN_AUTOMATION: true
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
-
-      - name: Get Environment Details
-        id: env
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const issue = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ inputs.issue_number }},
-            });
-
-            const metadata = JSON.parse(
-              issue.data.body.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}'
-            );
-
-            // Update issue status
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ inputs.issue_number }},
-              labels: ['environment', 'status:destroying'],
-            });
-
-            // Add comment about destruction starting
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ inputs.issue_number }},
-              body: '## Environment Destruction Started\n\nDestroying environment resources...',
-            });
-
-            return {
-              env_dir: metadata.terraform.tfvars_location.split('/')[0],
-              tfvars_path: metadata.terraform.tfvars_location,
-              state_location: metadata.terraform.state_location,
-            };
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -73,54 +31,218 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Terraform Init
-        working-directory: aws
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=${{ steps.env.outputs.state_location }}" \
-            -backend-config="region=${{ secrets.AWS_REGION }}" \
-            | tee "../${{ steps.env.outputs.env_dir }}/destroy-init.log"
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.0
+          terraform_wrapper: false
 
-      - name: Terraform Destroy
-        working-directory: aws
-        run: |
-          terraform destroy \
-            -auto-approve \
-            -var-file="../${{ steps.env.outputs.tfvars_path }}" \
-            | tee "../${{ steps.env.outputs.env_dir }}/destroy.log"
-
-      - name: Update Environment Status
+      - name: Get Environment Details
+        id: env
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // Update issue status
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ inputs.issue_number }},
-              labels: ['environment', 'status:destroyed'],
-              state: 'closed',
-            });
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+              });
 
-            // Add comment about destruction completion
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ inputs.issue_number }},
-              body: '## Environment Destroyed Successfully\n\nThe environment has been successfully destroyed and all resources have been cleaned up.',
-            });
+              // Extract metadata from the issue body
+              const jsonMatch = issue.data.body.match(/```json\n([\s\S]*?)\n```/);
+              if (!jsonMatch || !jsonMatch[1]) {
+                throw new Error('Could not find environment metadata in issue body');
+              }
+
+              const metadata = JSON.parse(jsonMatch[1]);
+              if (!metadata.environment || !metadata.environment.directory) {
+                throw new Error('Invalid environment metadata format');
+              }
+
+              // Update issue status
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+                labels: ['environment', 'status:destroying'],
+              });
+
+              // Add comment about destruction starting
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+                body: `## Environment Destruction Started 🗑️\n\nDestroying environment resources...\n\nEnvironment details:\n- Project: ${metadata.environment.project}\n- Organization: ${metadata.environment.organization}\n- Squad: ${metadata.environment.squad}\n- Type: ${metadata.environment.type}\n- Directory: ${metadata.environment.directory}`,
+              });
+
+              // Set outputs for later steps
+              core.setOutput('env_dir', metadata.environment.directory);
+              core.setOutput('project_name', metadata.environment.project);
+              core.setOutput('org_name', metadata.environment.organization);
+              core.setOutput('squad_name', metadata.environment.squad);
+              core.setOutput('environment', metadata.environment.type);
+
+            } catch (error) {
+              console.error('Error getting environment details:', error);
+              core.setFailed(`Failed to get environment details: ${error.message}`);
+            }
+
+      - name: Verify Environment Directory
+        run: |
+          if [ ! -d "${{ steps.env.outputs.env_dir }}" ]; then
+            echo "Error: Environment directory not found: ${{ steps.env.outputs.env_dir }}"
+            exit 1
+          fi
+          
+          if [ ! -f "${{ steps.env.outputs.env_dir }}/terraform.tfvars" ]; then
+            echo "Error: terraform.tfvars not found in environment directory"
+            exit 1
+          fi
+
+      - name: Terraform Init
+        id: init
+        working-directory: ${{ steps.env.outputs.env_dir }}
+        continue-on-error: false
+        run: |
+          # Initialize Terraform
+          terraform init -upgrade -reconfigure | tee logs/destroy-init.log
+          
+          # Check init status
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Error: Terraform init failed"
+            exit 1
+          fi
+
+      - name: Terraform Destroy
+        id: destroy
+        working-directory: ${{ steps.env.outputs.env_dir }}
+        continue-on-error: false
+        run: |
+          # Run terraform destroy
+          terraform destroy \
+            -auto-approve \
+            -var-file="./terraform.tfvars" \
+            | tee logs/destroy.log
+          
+          # Check destroy status
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Error: Terraform destroy failed"
+            exit 1
+          fi
+
+      - name: Update Environment Status
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+              });
+
+              // Update metadata
+              const jsonMatch = issue.data.body.match(/```json\n([\s\S]*?)\n```/);
+              if (jsonMatch && jsonMatch[1]) {
+                const metadata = JSON.parse(jsonMatch[1]);
+                metadata.environment.status = 'destroyed';
+                metadata.environment.destroyed_at = new Date().toISOString();
+
+                // Update issue body with new metadata
+                const updatedBody = issue.data.body.replace(
+                  /```json\n[\s\S]*?\n```/,
+                  `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``
+                );
+
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ inputs.issue_number }},
+                  body: updatedBody,
+                  labels: ['environment', 'status:destroyed'],
+                  state: 'closed',
+                });
+              }
+
+              // Add success comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+                body: `## Environment Destroyed Successfully ✅\n\nThe environment has been successfully destroyed and all resources have been cleaned up.\n\nEnvironment details:\n- Project: ${{ steps.env.outputs.project_name }}\n- Organization: ${{ steps.env.outputs.org_name }}\n- Squad: ${{ steps.env.outputs.squad_name }}\n- Type: ${{ steps.env.outputs.environment }}\n- Directory: ${{ steps.env.outputs.env_dir }}`,
+              });
+            } catch (error) {
+              console.error('Error updating environment status:', error);
+              core.setFailed(`Failed to update environment status: ${error.message}`);
+            }
+
+      - name: Handle Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+              });
+
+              // Update metadata
+              const jsonMatch = issue.data.body.match(/```json\n([\s\S]*?)\n```/);
+              if (jsonMatch && jsonMatch[1]) {
+                const metadata = JSON.parse(jsonMatch[1]);
+                metadata.environment.status = 'destroy_failed';
+                metadata.environment.destroy_failed_at = new Date().toISOString();
+
+                // Update issue body with new metadata
+                const updatedBody = issue.data.body.replace(
+                  /```json\n[\s\S]*?\n```/,
+                  `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``
+                );
+
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ inputs.issue_number }},
+                  body: updatedBody,
+                  labels: ['environment', 'status:destroy_failed'],
+                });
+              }
+
+              // Add failure comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ inputs.issue_number }},
+                body: `## Environment Destruction Failed ❌\n\nThe environment destruction process failed. Please check the logs for more details.\n\nEnvironment details:\n- Project: ${{ steps.env.outputs.project_name }}\n- Organization: ${{ steps.env.outputs.org_name }}\n- Squad: ${{ steps.env.outputs.squad_name }}\n- Type: ${{ steps.env.outputs.environment }}\n- Directory: ${{ steps.env.outputs.env_dir }}`,
+              });
+            } catch (error) {
+              console.error('Error handling failure:', error);
+              core.setFailed(`Failed to handle destruction failure: ${error.message}`);
+            }
 
       - name: Upload Destruction Logs
         uses: actions/upload-artifact@v4
         with:
           name: destroy-logs-${{ inputs.issue_number }}
-          path: ${{ steps.env.outputs.env_dir }}
+          path: ${{ steps.env.outputs.env_dir }}/logs
+          retention-days: 30
 
-      - name: Commit Environment Removal
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Remove environment ${{ steps.env.outputs.env_dir }}"
-          file_pattern: ${{ steps.env.outputs.env_dir }}
-          branch: main 
+      - name: Cleanup Environment Directory
+        if: success()
+        run: |
+          # Remove the environment directory after successful destruction
+          rm -rf "${{ steps.env.outputs.env_dir }}"
+          
+          # Commit the removal
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'github-actions@github.com'
+          git add -A
+          git commit -m "Remove environment ${{ steps.env.outputs.env_dir }} after successful destruction"
+          git push 
