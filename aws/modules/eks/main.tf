@@ -16,43 +16,7 @@ terraform {
   }
 }
 
-# Configure Kubernetes provider
-provider "kubernetes" {
-  host                   = aws_eks_cluster.main.endpoint
-  cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args = [
-      "eks",
-      "get-token",
-      "--cluster-name",
-      aws_eks_cluster.main.name,
-      "--region",
-      var.aws_region
-    ]
-  }
-}
-
-# Configure Helm provider
-provider "helm" {
-  kubernetes {
-    host                   = aws_eks_cluster.main.endpoint
-    cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-    exec {
-      api_version = "client.authentication.k8s.io/v1beta1"
-      command     = "aws"
-      args = [
-        "eks",
-        "get-token",
-        "--cluster-name",
-        aws_eks_cluster.main.name,
-        "--region",
-        var.aws_region
-      ]
-    }
-  }
-}
+# Remove provider configurations from here as they will be passed from the root module
 
 locals {
   # Get current timestamp in ISO 8601 format
