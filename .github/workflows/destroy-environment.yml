@@ -57,8 +57,12 @@ jobs:
               }
 
               const metadata = JSON.parse(jsonMatch[1]);
-              if (!metadata.environment || !metadata.environment.directory) {
+              if (!metadata.environment) {
                 throw new Error('Invalid environment metadata format');
+              }
+
+              if (!metadata.environment.download_url) {
+                throw new Error('Environment download URL not found in metadata');
               }
 
               // Update issue status
@@ -74,11 +78,11 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: ${{ inputs.issue_number }},
-                body: `## Environment Destruction Started 🗑️\n\nDestroying environment resources...\n\nEnvironment details:\n- Project: ${metadata.environment.project}\n- Organization: ${metadata.environment.organization}\n- Squad: ${metadata.environment.squad}\n- Type: ${metadata.environment.type}\n- Directory: ${metadata.environment.directory}`,
+                body: `## Environment Destruction Started 🗑️\n\nDestroying environment resources...\n\nEnvironment details:\n- Project: ${metadata.environment.project}\n- Organization: ${metadata.environment.organization}\n- Squad: ${metadata.environment.squad}\n- Type: ${metadata.environment.type}\n- Download URL: ${metadata.environment.download_url}`,
               });
 
               // Set outputs for later steps
-              core.setOutput('env_dir', metadata.environment.directory);
+              core.setOutput('download_url', metadata.environment.download_url);
               core.setOutput('project_name', metadata.environment.project);
               core.setOutput('org_name', metadata.environment.organization);
               core.setOutput('squad_name', metadata.environment.squad);
@@ -89,21 +93,37 @@ jobs:
               core.setFailed(`Failed to get environment details: ${error.message}`);
             }
 
-      - name: Verify Environment Directory
+      - name: Download Environment Files
         run: |
-          if [ ! -d "${{ steps.env.outputs.env_dir }}" ]; then
-            echo "Error: Environment directory not found: ${{ steps.env.outputs.env_dir }}"
+          # Create a temporary directory for the environment
+          ENV_DIR="environments/temp-${{ inputs.issue_number }}"
+          mkdir -p "$ENV_DIR"
+          echo "ENV_DIR=$ENV_DIR" >> $GITHUB_ENV
+          
+          # Download the zip file
+          curl -L "${{ steps.env.outputs.download_url }}" -o "$ENV_DIR/environment.zip"
+          
+          # Extract the zip file
+          cd "$ENV_DIR"
+          unzip environment.zip
+          rm environment.zip
+          
+          # Verify required files exist
+          if [ ! -f "terraform.tfvars" ]; then
+            echo "Error: terraform.tfvars not found in extracted files"
             exit 1
           fi
           
-          if [ ! -f "${{ steps.env.outputs.env_dir }}/terraform.tfvars" ]; then
-            echo "Error: terraform.tfvars not found in environment directory"
+          if [ ! -f "terraform.tfstate" ]; then
+            echo "Error: terraform.tfstate not found in extracted files"
             exit 1
           fi
+          
+          echo "Environment files extracted successfully to $ENV_DIR"
 
       - name: Terraform Init
         id: init
-        working-directory: ${{ steps.env.outputs.env_dir }}
+        working-directory: ${{ env.ENV_DIR }}
         continue-on-error: false
         run: |
           # Initialize Terraform
@@ -117,7 +137,7 @@ jobs:
 
       - name: Terraform Destroy
         id: destroy
-        working-directory: ${{ steps.env.outputs.env_dir }}
+        working-directory: ${{ env.ENV_DIR }}
         continue-on-error: false
         run: |
           # Run terraform destroy
@@ -131,6 +151,12 @@ jobs:
             echo "Error: Terraform destroy failed"
             exit 1
           fi
+
+      - name: Cleanup Environment Files
+        if: always()
+        run: |
+          # Remove the temporary environment directory
+          rm -rf "${{ env.ENV_DIR }}"
 
       - name: Update Environment Status
         if: success()

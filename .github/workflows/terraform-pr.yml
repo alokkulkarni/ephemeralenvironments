@@ -562,6 +562,91 @@ jobs:
               console.error('Error attaching apply logs:', error);
             }
 
+      - name: Upload environment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-${{ github.head_ref }}
+          path: ${{ env.ENV_DIR }}
+          retention-days: 30
+
+      - name: Create environment zip file
+        run: |
+          cd "${{ env.ENV_DIR }}"
+          zip -r "../environment.zip" .
+          cd ..
+          echo "ZIP_PATH=${{ env.ENV_DIR }}/../environment.zip" >> $GITHUB_ENV
+
+      - name: Attach environment zip to issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              const fs = require('fs');
+              const zipPath = process.env.ZIP_PATH;
+              const zipContent = fs.readFileSync(zipPath);
+              
+              // Create a release asset
+              const release = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: `env-${context.issue.number}`,
+                name: `Environment ${context.issue.number}`,
+                body: `Environment files for issue #${context.issue.number}`,
+                draft: false,
+                prerelease: false
+              });
+              
+              // Upload the zip file as a release asset
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.data.id,
+                name: 'environment.zip',
+                data: zipContent,
+                headers: {
+                  'content-type': 'application/zip'
+                }
+              });
+              
+              // Update issue with download link
+              const downloadUrl = release.data.assets[0].browser_download_url;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                body: `## Environment Files 📦\n\nEnvironment files are available for download:\n\n[Download Environment Files](${downloadUrl})\n\nThis zip file contains all the necessary files to manage this environment, including:\n- Terraform configuration files\n- Variable files\n- State files\n- Logs\n\nKeep this file safe as it will be needed for environment destruction.`
+              });
+              
+              // Update metadata to include download URL
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: ${{ needs.create-issue.outputs.issue_number }}
+              });
+              
+              const jsonMatch = issue.data.body.match(/```json\n([\s\S]*?)\n```/);
+              if (jsonMatch && jsonMatch[1]) {
+                const metadata = JSON.parse(jsonMatch[1]);
+                metadata.environment.download_url = downloadUrl;
+                
+                const updatedBody = issue.data.body.replace(
+                  /```json\n[\s\S]*?\n```/,
+                  `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``
+                );
+                
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody
+                });
+              }
+            } catch (error) {
+              console.error('Error attaching environment zip:', error);
+              core.setFailed(`Failed to attach environment zip: ${error.message}`);
+            }
+
       - name: Update Issue Status - Complete
         if: success()
         uses: actions/github-script@v7
@@ -608,13 +693,6 @@ jobs:
               body: updatedBody,
               labels: ['environment', 'status:active']
             });
-
-      - name: Upload environment artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: environment-${{ github.head_ref }}
-          path: ${{ env.ENV_DIR }}
-          retention-days: 30
 
       - name: Update Issue Status - Failed
         if: failure()

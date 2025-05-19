@@ -1,6 +1,7 @@
-import { createApiFactory, createPlugin, createRoutableExtension, createApiRef, configApiRef, createRouteRef } from '@backstage/core-plugin-api';
+import { createPlugin, createRoutableExtension, createApiRef, createRouteRef } from '@backstage/core-plugin-api';
 import { scmAuthApiRef } from '@backstage/integration-react';
-import { environmentApiRef, createEnvironmentApi } from './api';
+import { Octokit } from '@octokit/rest';
+import { environmentApiRef } from './api';
 
 export const rootRouteRef = createRouteRef({
   id: 'terraform-environments',
@@ -129,80 +130,31 @@ const getGitHubToken = async (scmAuthApi: typeof scmAuthApiRef.T): Promise<strin
 // Create Octokit instance with proper error handling
 const createOctokit = async (scmAuthApi: typeof scmAuthApiRef.T): Promise<Octokit> => {
   try {
-    const token = await getGitHubToken(scmAuthApi);
-    
+    const { token } = await scmAuthApi.getCredentials({
+      url: 'https://github.com',
+    });
+
     if (!token) {
-      throw new Error('Retrieved null or empty token');
+      throw new Error('No GitHub token available');
     }
-    
-    if (DEBUG) console.log('Creating Octokit instance with token');
+
     return new Octokit({
       auth: token,
-      request: {
-        // Add debugging for requests
-        hook: (request: any, options: any) => {
-          if (DEBUG) console.log(`Request: ${options.method} ${options.url}`);
-          return request(options);
-        },
+      log: {
+        debug: () => {},
+        info: () => {},
+        warn: console.warn,
+        error: console.error,
       },
     });
   } catch (error) {
-    if (DEBUG) console.error('Error creating Octokit instance:', error);
-    throw new Error(`GitHub authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error('Failed to create Octokit instance:', error);
+    throw new Error('Failed to authenticate with GitHub');
   }
 };
 
 export const terraformEnvironmentsPlugin = createPlugin({
-  id: 'terraform-environments',
-  apis: [
-    createApiFactory({
-      api: environmentApiRef,
-      deps: { 
-        configApi: configApiRef,
-        scmAuthApi: scmAuthApiRef 
-      },
-      factory: ({ configApi, scmAuthApi }) => {
-        // Get configuration with better error handling
-        let defaultOwner: string;
-        let defaultRepo: string;
-
-        try {
-          // Try to get config from terraformEnvironments namespace
-          defaultOwner = configApi.getString('terraformEnvironments.defaultOwner');
-          defaultRepo = configApi.getString('terraformEnvironments.defaultRepo');
-        } catch (e) {
-          // If not found in terraformEnvironments namespace, try root level
-          try {
-            defaultOwner = configApi.getString('defaultOwner');
-            defaultRepo = configApi.getString('defaultRepo');
-          } catch (e2) {
-            throw new Error(
-              'Missing required configuration. Please add the following to your app-config.yaml:\n\n' +
-              'terraformEnvironments:\n' +
-              '  defaultOwner: your-github-org\n' +
-              '  defaultRepo: your-github-repo\n\n' +
-              'Or at the root level:\n\n' +
-              'defaultOwner: your-github-org\n' +
-              'defaultRepo: your-github-repo'
-            );
-          }
-        }
-
-        // Log the configuration for debugging
-        console.log('Terraform Environments Plugin Configuration:', {
-          defaultOwner,
-          defaultRepo,
-          configPath: configApi.has('terraformEnvironments') ? 'terraformEnvironments' : 'root'
-        });
-
-        return createEnvironmentApi({ 
-          defaultOwner, 
-          defaultRepo, 
-          scmAuthApi 
-        });
-      },
-    }),
-  ],
+  id: 'invincible.terraform-environments',
   routes: {
     root: rootRouteRef,
   },

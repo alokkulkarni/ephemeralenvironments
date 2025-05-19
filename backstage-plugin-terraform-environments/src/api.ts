@@ -1,7 +1,22 @@
-import { createApiFactory, createApiRef } from '@backstage/core-plugin-api';
+import { createApiFactory, createApiRef, configApiRef } from '@backstage/core-plugin-api';
+import { Config } from '@backstage/config';
 import { scmAuthApiRef } from '@backstage/integration-react';
 import { Octokit } from '@octokit/rest';
 import { EnvironmentApi, Environment, EnvironmentListParams, EnvironmentGetParams } from './types';
+
+// Add type declaration for window.__APP_CONFIG__
+declare global {
+  interface Window {
+    __APP_CONFIG__?: {
+      data?: {
+        terraformEnvironments?: {
+          defaultOwner: string;
+          defaultRepo: string;
+        };
+      };
+    };
+  }
+}
 
 const parseEnvironmentStatus = (status: string): Environment['status'] => {
   switch (status.toLowerCase()) {
@@ -35,9 +50,20 @@ interface EnvironmentApiConfig {
   scmAuthApi: typeof scmAuthApiRef.T;
 }
 
+// Debug flag
+const DEBUG = true;
+
+// Simplified token retrieval following Roadie's pattern
 const createOctokit = async (scmAuthApi: typeof scmAuthApiRef.T) => {
   try {
-    const { token } = await scmAuthApi.getCredentials({ url: 'https://github.com' });
+    const { token } = await scmAuthApi.getCredentials({
+      url: 'https://github.com',
+    });
+
+    if (!token) {
+      throw new Error('No GitHub token available');
+    }
+
     return new Octokit({
       auth: token,
       log: {
@@ -48,8 +74,8 @@ const createOctokit = async (scmAuthApi: typeof scmAuthApiRef.T) => {
       },
     });
   } catch (error) {
-    console.error('Error creating Octokit instance:', error);
-    throw new Error(`GitHub authentication failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error('Failed to create Octokit instance:', error);
+    throw new Error('Failed to authenticate with GitHub');
   }
 };
 
@@ -57,27 +83,33 @@ export const createEnvironmentApi = ({ defaultOwner, defaultRepo, scmAuthApi }: 
   // Create a GitHub API instance
   const githubApi = {
     listIssues: async ({ owner = defaultOwner, repo = defaultRepo, labels }: { owner?: string; repo?: string; labels?: string[] }) => {
-      const octokit = await createOctokit(scmAuthApi);
-      const labelsParam = labels ? labels.join(',') : undefined;
-      const response = await octokit.issues.listForRepo({
-        owner,
-        repo,
-        state: 'all',
-        labels: labelsParam,
-      });
-      
-      return response.data.map(issue => ({
-        number: issue.number,
-        title: issue.title || '',
-        body: issue.body || '',
-        state: issue.state || '',
-        labels: issue.labels ? 
-          issue.labels.map(label => 
-            typeof label === 'string' ? { name: label } : { name: label.name || '' }
-          ) : [],
-        created_at: issue.created_at || '',
-        updated_at: issue.updated_at || '',
-      }));
+      try {
+        const octokit = await createOctokit(scmAuthApi);
+        const labelsParam = labels ? labels.join(',') : undefined;
+        
+        const response = await octokit.issues.listForRepo({
+          owner,
+          repo,
+          state: 'all',
+          labels: labelsParam,
+        });
+        
+        return response.data.map(issue => ({
+          number: issue.number,
+          title: issue.title || '',
+          body: issue.body || '',
+          state: issue.state || '',
+          labels: issue.labels ? 
+            issue.labels.map(label => 
+              typeof label === 'string' ? { name: label } : { name: label.name || '' }
+            ) : [],
+          created_at: issue.created_at || '',
+          updated_at: issue.updated_at || '',
+        }));
+      } catch (error) {
+        console.error('Failed to list issues:', error);
+        throw new Error(`Failed to list GitHub issues: ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
 
     getIssue: async ({ owner = defaultOwner, repo = defaultRepo, number }: { owner?: string; repo?: string; number: number }) => {
@@ -199,10 +231,7 @@ export const createEnvironmentApi = ({ defaultOwner, defaultRepo, scmAuthApi }: 
       await createEnvironmentApi({ defaultOwner, defaultRepo, scmAuthApi }).getEnvironment({ 
         owner, 
         repo, 
-        id,
-        projectName: 'default',
-        orgName: 'default',
-        squadName: 'default'
+        id
       });
 
       // Update the issue state to closed
@@ -261,11 +290,41 @@ export const createEnvironmentApi = ({ defaultOwner, defaultRepo, scmAuthApi }: 
 };
 
 export const environmentApiRef = createApiRef<EnvironmentApi>({
-  id: 'plugin.terraform-environments.api',
+  id: 'plugin.invincible.terraform-environments.api',
 });
 
-export const environmentApi = createApiFactory({
-  api: environmentApiRef,
-  deps: { scmAuthApi: scmAuthApiRef },
-  factory: ({ scmAuthApi }) => createEnvironmentApi({ defaultOwner: 'backstage', defaultRepo: 'terraform-environments', scmAuthApi }),
-}); 
+// Define the configuration type
+interface TerraformEnvironmentsConfig {
+  defaultowner: string;
+  defaultrepo: string;
+}
+
+export const environmentApi = {
+  factory: ({ scmAuthApi }: { scmAuthApi: typeof scmAuthApiRef.T }) => {
+    if (DEBUG) {
+      console.log('Initializing terraform-environments plugin');
+    }
+
+    // Access configuration through window.__APP_CONFIG__
+    const config = (window as any).__APP_CONFIG__?.data?.terraformenvironments as TerraformEnvironmentsConfig | undefined;
+    
+    if (!config?.defaultowner || !config?.defaultrepo) {
+      throw new Error(
+        'Missing required configuration. Please add the following to your app-config.yaml:\n' +
+        'terraformenvironments:\n' +
+        '  defaultowner: your-github-org\n' +
+        '  defaultrepo: your-repo-name'
+      );
+    }
+
+    if (DEBUG) {
+      console.log('Configuration loaded:', config);
+    }
+
+    return createEnvironmentApi({
+      defaultOwner: config.defaultowner,
+      defaultRepo: config.defaultrepo,
+      scmAuthApi,
+    });
+  }
+}; 
