@@ -53,71 +53,75 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              const issue = await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `[ENV] Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}`,
-                body: `## Environment Creation Started 🚀
-                
-                Creating a new environment with the following details:
-                
-                - Project: ${{ steps.tfvars.outputs.project_name }}
-                - Organization: ${{ steps.tfvars.outputs.org_name }}
-                - Squad: ${{ steps.tfvars.outputs.squad_name }}
-                - Environment: ${{ steps.tfvars.outputs.environment }}
-                - PR: #${context.issue.number}
-                
-                ### Status
-                - [ ] Validate tfvars file
-                - [ ] Create environment directory
-                - [ ] Initialize Terraform
-                - [ ] Plan infrastructure
-                - [ ] Apply infrastructure
-                - [ ] Upload artifacts
-                
-                ### Files
-                - \`terraform.tfvars\`: Environment variables (to be attached)
-                - \`plan.out\`: Terraform plan output (to be attached)
-                - \`logs/\`: Directory containing execution logs (to be attached)
-                
-                Created from PR #${context.issue.number}
-                
-                \`\`\`json
-                {
-                  "environment": {
-                    "project": "${{ steps.tfvars.outputs.project_name }}",
-                    "organization": "${{ steps.tfvars.outputs.org_name }}",
-                    "squad": "${{ steps.tfvars.outputs.squad_name }}",
-                    "type": "${{ steps.tfvars.outputs.environment }}",
-                    "created_at": "${new Date().toISOString()}",
-                    "pr_number": ${context.issue.number},
-                    "status": "creating"
+            const createIssue = async () => {
+              try {
+                const issue = await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `[ENV] Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}`,
+                  body: `## Environment Creation Started 🚀
+                  
+                  Creating a new environment with the following details:
+                  
+                  - Project: ${{ steps.tfvars.outputs.project_name }}
+                  - Organization: ${{ steps.tfvars.outputs.org_name }}
+                  - Squad: ${{ steps.tfvars.outputs.squad_name }}
+                  - Environment: ${{ steps.tfvars.outputs.environment }}
+                  - PR: #${context.issue.number}
+                  
+                  ### Status
+                  - [ ] Validate tfvars file
+                  - [ ] Create environment directory
+                  - [ ] Initialize Terraform
+                  - [ ] Plan infrastructure
+                  - [ ] Apply infrastructure
+                  - [ ] Upload artifacts
+                  
+                  ### Files
+                  - \`terraform.tfvars\`: Environment variables (to be attached)
+                  - \`plan.out\`: Terraform plan output (to be attached)
+                  - \`logs/\`: Directory containing execution logs (to be attached)
+                  
+                  Created from PR #${context.issue.number}
+                  
+                  \`\`\`json
+                  {
+                    "environment": {
+                      "project": "${{ steps.tfvars.outputs.project_name }}",
+                      "organization": "${{ steps.tfvars.outputs.org_name }}",
+                      "squad": "${{ steps.tfvars.outputs.squad_name }}",
+                      "type": "${{ steps.tfvars.outputs.environment }}",
+                      "created_at": "${new Date().toISOString()}",
+                      "pr_number": ${context.issue.number},
+                      "status": "creating"
+                    }
                   }
-                }
-                \`\`\`
-                `,
-                labels: ['environment', 'status:creating']
-              });
-              
-              // Add a comment to the PR with a link to the created issue
-              await github.rest.issues.createComment({
-                issue_number: context.issue.number,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                body: `## Environment Creation Started 🚀
+                  \`\`\`
+                  `,
+                  labels: ['environment', 'status:creating']
+                });
                 
-                An issue has been created to track the environment creation process.
+                // Add a comment to the PR with a link to the created issue
+                await github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `## Environment Creation Started 🚀
+                  
+                  An issue has been created to track the environment creation process.
+                  
+                  See issue #${issue.data.number}: [Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}](${issue.data.html_url})
+                  `
+                });
                 
-                See issue #${issue.data.number}: [Create Environment: ${{ steps.tfvars.outputs.project_name }}-${{ steps.tfvars.outputs.environment }}](${issue.data.html_url})
-                `
-              });
-              
-              return issue.data.number;
-            } catch (error) {
-              console.error('Error creating issue:', error);
-              throw error;
-            }
+                return issue.data.number;
+              } catch (error) {
+                console.error('Error creating issue:', error);
+                throw error;
+              }
+            };
+            
+            return createIssue();
 
   validate-and-deploy:
     name: Validate and Deploy Environment
@@ -145,24 +149,29 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }}
-              });
-              
-              const updatedBody = issue.data.body.replace('- [ ] Validate tfvars file', '- [x] Validate tfvars file');
-              
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: updatedBody
-              });
-            } catch (error) {
-              console.error('Error updating issue status:', error);
-            }
+            const updateIssueStatus = async () => {
+              try {
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }}
+                });
+                
+                const updatedBody = issue.data.body.replace('- [ ] Validate tfvars file', '- [x] Validate tfvars file');
+                
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody
+                });
+              } catch (error) {
+                console.error('Error updating issue status:', error);
+                throw error;
+              }
+            };
+            
+            return updateIssueStatus();
 
       - name: Validate tfvars file
         id: validate
@@ -225,24 +234,29 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }}
-              });
-              
-              const updatedBody = issue.data.body.replace('- [ ] Create environment directory', '- [x] Create environment directory');
-              
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: updatedBody
-              });
-            } catch (error) {
-              console.error('Error updating issue status:', error);
-            }
+            const updateIssueStatus = async () => {
+              try {
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }}
+                });
+                
+                const updatedBody = issue.data.body.replace('- [ ] Create environment directory', '- [x] Create environment directory');
+                
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody
+                });
+              } catch (error) {
+                console.error('Error updating issue status:', error);
+                throw error;
+              }
+            };
+            
+            return updateIssueStatus();
 
       - name: Create environments directory
         id: env_dir
@@ -335,24 +349,29 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }}
-              });
-              
-              const updatedBody = issue.data.body.replace('- [ ] Initialize Terraform', '- [x] Initialize Terraform');
-              
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: updatedBody
-              });
-            } catch (error) {
-              console.error('Error updating issue status:', error);
-            }
+            const updateIssueStatus = async () => {
+              try {
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }}
+                });
+                
+                const updatedBody = issue.data.body.replace('- [ ] Initialize Terraform', '- [x] Initialize Terraform');
+                
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody
+                });
+              } catch (error) {
+                console.error('Error updating issue status:', error);
+                throw error;
+              }
+            };
+            
+            return updateIssueStatus();
 
       - name: Terraform Init
         working-directory: ${{ env.ENV_DIR }}
@@ -406,24 +425,29 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }}
-              });
-              
-              const updatedBody = issue.data.body.replace('- [ ] Plan infrastructure', '- [x] Plan infrastructure');
-              
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: updatedBody
-              });
-            } catch (error) {
-              console.error('Error updating issue status:', error);
-            }
+            const updateIssueStatus = async () => {
+              try {
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }}
+                });
+                
+                const updatedBody = issue.data.body.replace('- [ ] Plan infrastructure', '- [x] Plan infrastructure');
+                
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody
+                });
+              } catch (error) {
+                console.error('Error updating issue status:', error);
+                throw error;
+              }
+            };
+            
+            return updateIssueStatus();
 
       - name: Terraform Plan
         working-directory: ${{ env.ENV_DIR }}
@@ -487,24 +511,29 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }}
-              });
-              
-              const updatedBody = issue.data.body.replace('- [ ] Apply infrastructure', '- [x] Apply infrastructure');
-              
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: updatedBody
-              });
-            } catch (error) {
-              console.error('Error updating issue status:', error);
-            }
+            const updateIssueStatus = async () => {
+              try {
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }}
+                });
+                
+                const updatedBody = issue.data.body.replace('- [ ] Apply infrastructure', '- [x] Apply infrastructure');
+                
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody
+                });
+              } catch (error) {
+                console.error('Error updating issue status:', error);
+                throw error;
+              }
+            };
+            
+            return updateIssueStatus();
 
       - name: Terraform Apply
         working-directory: ${{ env.ENV_DIR }}
@@ -563,50 +592,54 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              // Get the issue
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }}
-              });
-              
-              // Create metadata for successful deployment
-              const envDir = '${{ env.ENV_DIR }}';
-              const metadata = {
-                environment: {
-                  directory: envDir,
-                  project: '${{ steps.validate.outputs.project_name }}',
-                  organization: '${{ steps.validate.outputs.org_name }}',
-                  squad: '${{ steps.validate.outputs.squad_name }}',
-                  type: '${{ steps.validate.outputs.environment }}',
-                  created_at: new Date().toISOString(),
-                  pr_number: context.issue.number,
-                  status: 'active'
-                }
-              };
-              
-              // Update the checklist and status in the body text
-              let updatedBody = issue.data.body
-                .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
-                .replace('status: "creating"', 'status: "active"');
-              
-              // Update the JSON metadata
-              const jsonRegex = /```json\n[\s\S]*?\n```/;
-              updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
-              
-              // Update the issue with the new body and labels
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: updatedBody,
-                labels: ['environment', 'status:active']
-              });
-            } catch (error) {
-              console.error('Error updating issue:', error);
-              throw error;
-            }
+            const updateIssueComplete = async () => {
+              try {
+                // Get the issue
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }}
+                });
+                
+                // Create metadata for successful deployment
+                const envDir = '${{ env.ENV_DIR }}';
+                const metadata = {
+                  environment: {
+                    directory: envDir,
+                    project: '${{ steps.validate.outputs.project_name }}',
+                    organization: '${{ steps.validate.outputs.org_name }}',
+                    squad: '${{ steps.validate.outputs.squad_name }}',
+                    type: '${{ steps.validate.outputs.environment }}',
+                    created_at: new Date().toISOString(),
+                    pr_number: context.issue.number,
+                    status: 'active'
+                  }
+                };
+                
+                // Update the checklist and status in the body text
+                let updatedBody = issue.data.body
+                  .replace('- [ ] Upload artifacts', '- [x] Upload artifacts')
+                  .replace('status: "creating"', 'status: "active"');
+                
+                // Update the JSON metadata
+                const jsonRegex = /```json\n[\s\S]*?\n```/;
+                updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(metadata, null, 2)}\n\`\`\``);
+                
+                // Update the issue with the new body and labels
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody,
+                  labels: ['environment', 'status:active']
+                });
+              } catch (error) {
+                console.error('Error updating issue:', error);
+                throw error;
+              }
+            };
+            
+            return updateIssueComplete();
 
       - name: Upload environment artifacts
         uses: actions/upload-artifact@v4
@@ -621,51 +654,55 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            try {
-              // Get the issue
-              const issue = await github.rest.issues.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }}
-              });
-              
-              // Safely parse the JSON metadata
-              let currentMetadata = { environment: {} };
+            const updateIssueFailed = async () => {
               try {
-                const jsonMatch = issue.data.body.match(/```json\n([\s\S]*?)\n```/);
-                if (jsonMatch && jsonMatch[1]) {
-                  currentMetadata = JSON.parse(jsonMatch[1]);
+                // Get the issue
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }}
+                });
+                
+                // Safely parse the JSON metadata
+                let currentMetadata = { environment: {} };
+                try {
+                  const jsonMatch = issue.data.body.match(/```json\n([\s\S]*?)\n```/);
+                  if (jsonMatch && jsonMatch[1]) {
+                    currentMetadata = JSON.parse(jsonMatch[1]);
+                  }
+                } catch (parseError) {
+                  console.error('Error parsing JSON metadata:', parseError);
                 }
-              } catch (parseError) {
-                console.error('Error parsing JSON metadata:', parseError);
+                
+                // Create updated metadata
+                const updatedMetadata = {
+                  environment: {
+                    ...currentMetadata.environment,
+                    status: 'failed',
+                    failed_at: new Date().toISOString()
+                  }
+                };
+                
+                // Update the status in the body text
+                let updatedBody = issue.data.body
+                  .replace('status: "creating"', 'status: "failed"');
+                
+                // Update the JSON metadata
+                const jsonRegex = /```json\n[\s\S]*?\n```/;
+                updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(updatedMetadata, null, 2)}\n\`\`\``);
+                
+                // Update the issue with the new body and labels
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: ${{ needs.create-issue.outputs.issue_number }},
+                  body: updatedBody,
+                  labels: ['environment', 'status:failed']
+                });
+              } catch (error) {
+                console.error('Error updating issue on failure:', error);
+                throw error;
               }
-              
-              // Create updated metadata
-              const updatedMetadata = {
-                environment: {
-                  ...currentMetadata.environment,
-                  status: 'failed',
-                  failed_at: new Date().toISOString()
-                }
-              };
-              
-              // Update the status in the body text
-              let updatedBody = issue.data.body
-                .replace('status: "creating"', 'status: "failed"');
-              
-              // Update the JSON metadata
-              const jsonRegex = /```json\n[\s\S]*?\n```/;
-              updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(updatedMetadata, null, 2)}\n\`\`\``);
-              
-              // Update the issue with the new body and labels
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: ${{ needs.create-issue.outputs.issue_number }},
-                body: updatedBody,
-                labels: ['environment', 'status:failed']
-              });
-            } catch (error) {
-              console.error('Error updating issue on failure:', error);
-              throw error;
-            }
+            };
+            
+            return updateIssueFailed();

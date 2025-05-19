@@ -1,11 +1,23 @@
-import { createApiFactory, createPlugin, createRoutableExtension, createApiRef } from '@backstage/core-plugin-api';
-import { rootRouteRef } from './routes';
+import { createApiFactory, createPlugin, createRoutableExtension, createApiRef, configApiRef, createRouteRef } from '@backstage/core-plugin-api';
 import { scmAuthApiRef } from '@backstage/integration-react';
-import { Octokit } from '@octokit/rest';
+import { environmentApiRef, createEnvironmentApi } from './api';
+
+export const rootRouteRef = createRouteRef({
+  id: 'terraform-environments',
+});
 
 // Configuration options for the plugin
 export interface TerraformEnvironmentsConfig {
+  /**
+   * Default GitHub organization/owner name to use when not specified in entity annotations
+   * @example "my-org"
+   */
   defaultOwner: string;
+
+  /**
+   * Default GitHub repository name to use when not specified in entity annotations
+   * @example "my-repo"
+   */
   defaultRepo: string;
 }
 
@@ -144,128 +156,50 @@ export const terraformEnvironmentsPlugin = createPlugin({
   id: 'terraform-environments',
   apis: [
     createApiFactory({
-      api: githubApiRef,
-      deps: { scmAuthApi: scmAuthApiRef },
-      factory: ({ scmAuthApi }) => {
-        return {
-          listIssues: async ({ owner, repo, labels }) => {
-            try {
-              if (DEBUG) console.log(`Listing issues for ${owner}/${repo}`);
-              const octokit = await createOctokit(scmAuthApi);
-              
-              const labelsParam = labels ? labels.join(',') : undefined;
-              const response = await octokit.issues.listForRepo({
-                owner,
-                repo,
-                state: 'all',
-                labels: labelsParam,
-              });
-              
-              // Transform the Octokit response to our GitHubIssue type
-              return response.data.map(issue => ({
-                number: issue.number,
-                title: issue.title || '',
-                body: issue.body || '',
-                state: issue.state || '',
-                labels: issue.labels ? 
-                  issue.labels.map(label => 
-                    typeof label === 'string' ? { name: label } : { name: label.name || '' }
-                  ) : [],
-                created_at: issue.created_at || '',
-                updated_at: issue.updated_at || '',
-              }));
-            } catch (error: any) {
-              console.error('Error fetching issues from GitHub:', error);
-              throw new Error(`GitHub API error: ${error?.message || 'Unknown error'}`);
-            }
-          },
+      api: environmentApiRef,
+      deps: { 
+        configApi: configApiRef,
+        scmAuthApi: scmAuthApiRef 
+      },
+      factory: ({ configApi, scmAuthApi }) => {
+        // Get configuration with better error handling
+        let defaultOwner: string;
+        let defaultRepo: string;
 
-          getIssue: async ({ owner, repo, number }) => {
-            try {
-              if (DEBUG) console.log(`Getting issue #${number} from ${owner}/${repo}`);
-              const octokit = await createOctokit(scmAuthApi);
-              
-              const response = await octokit.issues.get({
-                owner,
-                repo,
-                issue_number: number,
-              });
-              
-              const issue = response.data;
-              // Transform to our GitHubIssue type
-              return {
-                number: issue.number,
-                title: issue.title || '',
-                body: issue.body || '',
-                state: issue.state || '',
-                labels: issue.labels ? 
-                  issue.labels.map(label => 
-                    typeof label === 'string' ? { name: label } : { name: label.name || '' }
-                  ) : [],
-                created_at: issue.created_at || '',
-                updated_at: issue.updated_at || '',
-              };
-            } catch (error: any) {
-              console.error('Error fetching issue from GitHub:', error);
-              throw new Error(`GitHub API error: ${error?.message || 'Unknown error'}`);
-            }
-          },
+        try {
+          // Try to get config from terraformEnvironments namespace
+          defaultOwner = configApi.getString('terraformEnvironments.defaultOwner');
+          defaultRepo = configApi.getString('terraformEnvironments.defaultRepo');
+        } catch (e) {
+          // If not found in terraformEnvironments namespace, try root level
+          try {
+            defaultOwner = configApi.getString('defaultOwner');
+            defaultRepo = configApi.getString('defaultRepo');
+          } catch (e2) {
+            throw new Error(
+              'Missing required configuration. Please add the following to your app-config.yaml:\n\n' +
+              'terraformEnvironments:\n' +
+              '  defaultOwner: your-github-org\n' +
+              '  defaultRepo: your-github-repo\n\n' +
+              'Or at the root level:\n\n' +
+              'defaultOwner: your-github-org\n' +
+              'defaultRepo: your-github-repo'
+            );
+          }
+        }
 
-          createComment: async ({ owner, repo, number, body }) => {
-            try {
-              if (DEBUG) console.log(`Creating comment on issue #${number} in ${owner}/${repo}`);
-              const octokit = await createOctokit(scmAuthApi);
-              
-              await octokit.issues.createComment({
-                owner,
-                repo,
-                issue_number: number,
-                body,
-              });
-            } catch (error: any) {
-              console.error('Error creating comment on GitHub:', error);
-              throw new Error(`GitHub API error: ${error?.message || 'Unknown error'}`);
-            }
-          },
+        // Log the configuration for debugging
+        console.log('Terraform Environments Plugin Configuration:', {
+          defaultOwner,
+          defaultRepo,
+          configPath: configApi.has('terraformEnvironments') ? 'terraformEnvironments' : 'root'
+        });
 
-          updateIssue: async ({ owner, repo, number, state }) => {
-            try {
-              if (DEBUG) console.log(`Updating issue #${number} in ${owner}/${repo} to state ${state}`);
-              const octokit = await createOctokit(scmAuthApi);
-              
-              // Ensure state is valid (open or closed)
-              const validState = state === 'open' || state === 'closed' ? state : 'closed';
-              
-              await octokit.issues.update({
-                owner,
-                repo,
-                issue_number: number,
-                state: validState,
-              });
-            } catch (error: any) {
-              console.error('Error updating issue on GitHub:', error);
-              throw new Error(`GitHub API error: ${error?.message || 'Unknown error'}`);
-            }
-          },
-
-          createWorkflowDispatch: async ({ owner, repo, workflow_id, ref, inputs }) => {
-            try {
-              if (DEBUG) console.log(`Dispatching workflow ${workflow_id} in ${owner}/${repo}`);
-              const octokit = await createOctokit(scmAuthApi);
-              
-              await octokit.actions.createWorkflowDispatch({
-                owner,
-                repo,
-                workflow_id,
-                ref,
-                inputs,
-              });
-            } catch (error: any) {
-              console.error('Error dispatching workflow on GitHub:', error);
-              throw new Error(`GitHub API error: ${error?.message || 'Unknown error'}`);
-            }
-          },
-        };
+        return createEnvironmentApi({ 
+          defaultOwner, 
+          defaultRepo, 
+          scmAuthApi 
+        });
       },
     }),
   ],
