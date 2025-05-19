@@ -129,16 +129,25 @@ jobs:
       issues: write
     env:
       TF_IN_AUTOMATION: true
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.0
+          terraform_wrapper: false
 
       - name: Update Issue Status - Validating
         uses: actions/github-script@v7
@@ -349,9 +358,9 @@ jobs:
             });
 
       - name: Terraform Init
+        id: init
         working-directory: ${{ env.ENV_DIR }}
-        env:
-          TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
+        continue-on-error: false
         run: |
           # Verify tfvars file exists before init
           if [ ! -f "terraform.tfvars" ]; then
@@ -359,15 +368,15 @@ jobs:
             exit 1
           fi
           
-          # First init without plugin-dir to download providers
+          # Initialize Terraform
           terraform init -upgrade -reconfigure | tee logs/init.log
           
-          # Then init with plugin-dir to use cached providers
-          terraform init \
-            -reconfigure \
-            -plugin-dir="${{ env.TF_PLUGIN_CACHE_DIR }}" \
-            | tee -a logs/init.log
-
+          # Check init status
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Error: Terraform init failed"
+            exit 1
+          fi
+          
           # Attach init logs to issue
           echo "INIT_LOG_PATH=${{ env.ENV_DIR }}/logs/init.log" >> $GITHUB_ENV
 
@@ -418,10 +427,9 @@ jobs:
             });
 
       - name: Terraform Plan
+        id: plan
         working-directory: ${{ env.ENV_DIR }}
-        env:
-          TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
-          TF_WORKSPACE: "default"
+        continue-on-error: false
         run: |
           # Verify tfvars file exists before plan
           if [ ! -f "terraform.tfvars" ]; then
@@ -429,11 +437,7 @@ jobs:
             exit 1
           fi
           
-          # Verify tfvars content
-          echo "Contents of terraform.tfvars:"
-          cat terraform.tfvars
-          
-          # Run terraform plan with explicit var-file path
+          # Run terraform plan
           terraform plan \
             -var-file="./terraform.tfvars" \
             -out="plan.out" \
@@ -441,12 +445,18 @@ jobs:
             -refresh=true \
             | tee logs/plan.log
           
+          # Check plan status
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Error: Terraform plan failed"
+            exit 1
+          fi
+          
           # Verify plan output was created
           if [ ! -f "plan.out" ]; then
             echo "Error: terraform plan output file not created"
             exit 1
           fi
-
+          
           # Attach plan logs to issue
           echo "PLAN_LOG_PATH=${{ env.ENV_DIR }}/logs/plan.log" >> $GITHUB_ENV
 
@@ -497,10 +507,9 @@ jobs:
             });
 
       - name: Terraform Apply
+        id: apply
         working-directory: ${{ env.ENV_DIR }}
-        env:
-          TF_PLUGIN_CACHE_DIR: ${{ env.TF_PLUGIN_CACHE_DIR }}
-          TF_WORKSPACE: "default"
+        continue-on-error: false
         run: |
           # Verify tfvars file exists before apply
           if [ ! -f "terraform.tfvars" ]; then
@@ -514,12 +523,18 @@ jobs:
             exit 1
           fi
           
-          # Run terraform apply with explicit var-file path
+          # Run terraform apply
           terraform apply \
             -auto-approve \
-            -var-file="./terraform.tfvars" \
+            "plan.out" \
             | tee logs/apply.log
-
+          
+          # Check apply status
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "Error: Terraform apply failed"
+            exit 1
+          fi
+          
           # Attach apply logs to issue
           echo "APPLY_LOG_PATH=${{ env.ENV_DIR }}/logs/apply.log" >> $GITHUB_ENV
 
@@ -608,6 +623,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const issueNumber = ${{ needs.create-issue.outputs.issue_number }};
+            const failedStep = process.env.FAILED_STEP || 'unknown';
             
             const issue = await github.rest.issues.get({
               owner: context.repo.owner,
@@ -629,12 +645,14 @@ jobs:
               environment: {
                 ...currentMetadata.environment,
                 status: 'failed',
-                failed_at: new Date().toISOString()
+                failed_at: new Date().toISOString(),
+                failed_step: failedStep
               }
             };
             
             let updatedBody = issue.data.body
-              .replace('status: "creating"', 'status: "failed"');
+              .replace('status: "creating"', 'status: "failed"')
+              .replace('status: "active"', 'status: "failed"');
             
             const jsonRegex = /```json\n[\s\S]*?\n```/;
             updatedBody = updatedBody.replace(jsonRegex, `\`\`\`json\n${JSON.stringify(updatedMetadata, null, 2)}\n\`\`\``);
@@ -645,4 +663,12 @@ jobs:
               issue_number: issueNumber,
               body: updatedBody,
               labels: ['environment', 'status:failed']
+            });
+            
+            // Add failure comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `## Environment Creation Failed ❌\n\nFailed during step: ${failedStep}\n\nPlease check the logs for more details.`
             });
