@@ -1,21 +1,21 @@
 output "eks_cluster_role_arn" {
-  description = "ARN of the EKS cluster IAM role"
+  description = "ARN of the EKS cluster role"
   value       = aws_iam_role.eks_cluster.arn
 }
 
 output "eks_node_group_role_arn" {
-  description = "ARN of the EKS node group IAM role"
+  description = "ARN of the EKS node group role"
   value       = aws_iam_role.eks_node_group.arn
 }
 
 output "eks_pod_role_arn" {
-  description = "ARN of the IAM role for EKS pods"
-  value       = aws_iam_role.eks_pod_role.arn
+  description = "ARN of the EKS pod role"
+  value       = var.eks_oidc_provider_arn != null ? aws_iam_role.eks_pod_role[0].arn : null
 }
 
 output "eks_pod_role_name" {
-  description = "Name of the IAM role for EKS pods"
-  value       = aws_iam_role.eks_pod_role.name
+  description = "Name of the EKS pod role"
+  value       = var.eks_oidc_provider_arn != null ? aws_iam_role.eks_pod_role[0].name : null
 }
 
 output "rds_access_policy_arn" {
@@ -39,11 +39,16 @@ output "elasticache_access_policy_arn" {
 }
 
 output "aws_load_balancer_controller_role_arn" {
-  description = "ARN of the IAM role for AWS Load Balancer Controller"
-  value       = aws_iam_role.aws_load_balancer_controller.arn
+  description = "ARN of the AWS Load Balancer Controller role"
+  value       = var.eks_oidc_provider_arn != null ? aws_iam_role.aws_load_balancer_controller[0].arn : null
 }
 
 output "aws_load_balancer_controller_role_name" {
-  description = "Name of the IAM role for AWS Load Balancer Controller"
-  value       = aws_iam_role.aws_load_balancer_controller.name
+  description = "Name of the AWS Load Balancer Controller role"
+  value       = var.eks_oidc_provider_arn != null ? aws_iam_role.aws_load_balancer_controller[0].name : null
+}
+
+output "aws_load_balancer_controller_policy_arn" {
+  description = "ARN of the AWS Load Balancer Controller policy"
+  value       = var.eks_oidc_provider_arn != null ? aws_iam_policy.aws_load_balancer_controller[0].arn : null
 } 
