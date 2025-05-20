@@ -437,17 +437,79 @@ jobs:
             exit 1
           fi
           
+          # Check that terraform configuration files exist
+          if [ ! -f "variables.tf" ]; then
+            echo "Error: variables.tf not found in working directory"
+            ls -la
+            exit 1
+          fi
+          
+          # List all .tf files to debug
+          echo "Terraform configuration files:"
+          ls -la *.tf
+          
+          # Display the contents of variables.tf for debugging
+          echo "Contents of variables.tf:"
+          cat variables.tf
+          
           # Run terraform plan with auto-generated password for RDS
           # Generate a secure random password for RDS
           RDS_PASSWORD=$(openssl rand -base64 16)
           
-          # Run terraform plan with the password provided
+          # Extract only the variables that are actually declared in variables.tf
+          echo "Extracting declared variables from variables.tf..."
+          # Try multiple patterns to find variable declarations
+          PATTERN1=$(grep -Po "^variable\s+\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
+          PATTERN2=$(grep -Po "^variable\s+\\K[^ {]*" *.tf 2>/dev/null || echo "")
+          PATTERN3=$(grep -Po "^variable\s*{\\s*name\\s*=\\s*\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
+          
+          # Combine all patterns
+          DECLARED_VARS=$(echo "$PATTERN1 $PATTERN2 $PATTERN3" | tr ' ' '\n' | sort -u | grep -v '^$')
+          echo "Declared variables:"
+          echo "$DECLARED_VARS"
+          
+          # Always include these critical variables
+          REQUIRED_VARS="environment aws_region project_name org_name squad_name rds_password"
+          echo "Adding required variables: $REQUIRED_VARS"
+          DECLARED_VARS=$(echo -e "$DECLARED_VARS\n$REQUIRED_VARS" | tr ' ' '\n' | sort -u | grep -v '^$')
+          
+          # Create a filtered tfvars file with only declared variables
+          echo "Creating filtered tfvars file..."
+          FILTERED_TFVARS="filtered.tfvars"
+          touch "$FILTERED_TFVARS"
+          
+          # Read each variable from the original tfvars and only keep declared ones
+          echo "Filtering terraform.tfvars to create $FILTERED_TFVARS"
+          while IFS= read -r line; do
+            # Skip comments and empty lines
+            if [[ "$line" =~ ^\s*# || "$line" =~ ^\s*$ ]]; then
+              continue
+            fi
+            
+            VAR_NAME=$(echo "$line" | grep -Po "^\\K[^=]*" | xargs)
+            if [[ -n "$VAR_NAME" ]]; then
+              # Check if this variable is in the declared variables list
+              if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
+                echo "$line" >> "$FILTERED_TFVARS"
+                echo "Adding variable: $VAR_NAME"
+              else
+                echo "Skipping undeclared variable: $VAR_NAME"
+              fi
+            fi
+          done < terraform.tfvars
+          
+          # Display the filtered variables file for debugging
+          echo "Contents of filtered.tfvars:"
+          cat "$FILTERED_TFVARS"
+          
+          # Run terraform plan with the password provided and ignore warnings
           terraform plan \
-            -var-file="./terraform.tfvars" \
+            -var-file="./$FILTERED_TFVARS" \
             -var="rds_password=${RDS_PASSWORD}" \
             -out="plan.out" \
             -parallelism=10 \
             -refresh=true \
+            -compact-warnings \
             | tee logs/plan.log
             
           # Save the password securely for apply step
@@ -531,11 +593,53 @@ jobs:
             exit 1
           fi
           
-          # Run terraform apply (using the plan output)
-          # Note: The RDS password is already included in the plan output
+          # Run terraform apply
+          # Instead of using plan.out which might be incomplete, we'll run apply directly
+          # with the filtered variables to ensure consistency
+          if [ ! -f "$FILTERED_TFVARS" ]; then
+            echo "Error: Filtered tfvars file not found. Creating it again..."
+            # Re-create the filtered tfvars file if needed
+            # Try multiple patterns to find variable declarations
+            PATTERN1=$(grep -Po "^variable\s+\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
+            PATTERN2=$(grep -Po "^variable\s+\\K[^ {]*" *.tf 2>/dev/null || echo "")
+            PATTERN3=$(grep -Po "^variable\s*{\\s*name\\s*=\\s*\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
+            
+            # Combine all patterns
+            DECLARED_VARS=$(echo "$PATTERN1 $PATTERN2 $PATTERN3" | tr ' ' '\n' | sort -u | grep -v '^$')
+            
+            # Always include these critical variables
+            REQUIRED_VARS="environment aws_region project_name org_name squad_name rds_password"
+            DECLARED_VARS=$(echo -e "$DECLARED_VARS\n$REQUIRED_VARS" | tr ' ' '\n' | sort -u | grep -v '^$')
+            
+            FILTERED_TFVARS="filtered.tfvars"
+            touch "$FILTERED_TFVARS"
+            
+            # Read each variable from the original tfvars and only keep declared ones
+            while IFS= read -r line; do
+              # Skip comments and empty lines
+              if [[ "$line" =~ ^\s*# || "$line" =~ ^\s*$ ]]; then
+                continue
+              fi
+              
+              VAR_NAME=$(echo "$line" | grep -Po "^\\K[^=]*" | xargs)
+              if [[ -n "$VAR_NAME" ]]; then
+                # Check if this variable is in the declared variables list
+                if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
+                  echo "$line" >> "$FILTERED_TFVARS"
+                  echo "Adding variable: $VAR_NAME"
+                else
+                  echo "Skipping undeclared variable: $VAR_NAME"
+                fi
+              fi
+            done < terraform.tfvars
+          fi
+          
+          # Run terraform apply with filtered variables and the RDS password
           terraform apply \
             -auto-approve \
-            "plan.out" \
+            -var-file="./$FILTERED_TFVARS" \
+            -var="rds_password=${RDS_PASSWORD}" \
+            -compact-warnings \
             | tee logs/apply.log
             
           # Store the RDS password in a secure file for later reference
