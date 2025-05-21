@@ -480,27 +480,72 @@ jobs:
           
           # Read each variable from the original tfvars and only keep declared ones
           echo "Filtering terraform.tfvars to create $FILTERED_TFVARS"
-          while IFS= read -r line; do
-            # Skip comments and empty lines
-            if [[ "$line" =~ ^\s*# || "$line" =~ ^\s*$ ]]; then
-              continue
-            fi
-            
-            VAR_NAME=$(echo "$line" | grep -Po "^\\K[^=]*" | xargs)
-            if [[ -n "$VAR_NAME" ]]; then
-              # Check if this variable is in the declared variables list
-              if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
-                echo "$line" >> "$FILTERED_TFVARS"
-                echo "Adding variable: $VAR_NAME"
-              else
+          # Create an empty file
+          > "$FILTERED_TFVARS"
+          
+          # Create a temporary file to track which variables we've already added
+          ADDED_VARS_FILE=$(mktemp)
+          
+          # Add rds_password ahead of time to avoid issues with ordering
+          if ! grep -q "^rds_password\s*=" terraform.tfvars; then
+            echo "rds_password = \"${RDS_PASSWORD}\"" >> "$FILTERED_TFVARS"
+            echo "rds_password" >> "$ADDED_VARS_FILE"
+            echo "Adding variable: rds_password"
+          else
+            echo "rds_password already exists in tfvars, will be processed normally"
+          fi
+          
+          # Debug: show content of terraform.tfvars
+          echo "Contents of original terraform.tfvars file:"
+          cat terraform.tfvars
+          
+          # Extract only simple key-value pairs, handling multi-line blocks more carefully
+          awk -F= '{
+            if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) {
+              # Skip comments and empty lines
+              next
+            } else if ($0 ~ /^[a-zA-Z0-9_-]+[[:space:]]*=/) {
+              # Extract variable name for simple assignments
+              var_name = $1
+              gsub(/[[:space:]]*$/, "", var_name)
+              gsub(/^[[:space:]]*/, "", var_name)
+              print var_name
+            }
+          }' terraform.tfvars > declared_in_tfvars.txt
+          
+          echo "Variables found in tfvars file:"
+          cat declared_in_tfvars.txt
+          
+          # Process only the simple variable assignments
+          while read -r VAR_NAME; do
+            # Check if this variable is in the declared variables list and hasn't been added yet
+            if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$" && ! grep -q "^$VAR_NAME$" "$ADDED_VARS_FILE"; then
+              # Extract the entire line from the original tfvars file
+              grep -E "^$VAR_NAME[[:space:]]*=" terraform.tfvars >> "$FILTERED_TFVARS"
+              echo "$VAR_NAME" >> "$ADDED_VARS_FILE"
+              echo "Adding variable: $VAR_NAME"
+            else
+              if ! echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
                 echo "Skipping undeclared variable: $VAR_NAME"
+              else
+                echo "Skipping duplicate variable: $VAR_NAME"
               fi
             fi
-          done < terraform.tfvars
+          done < declared_in_tfvars.txt
+          
+          # Clean up the temporary file
+          rm -f declared_in_tfvars.txt
+          
+          # Clean up
+          rm -f "$ADDED_VARS_FILE"
           
           # Display the filtered variables file for debugging
           echo "Contents of filtered.tfvars:"
           cat "$FILTERED_TFVARS"
+          
+          # Verify the file is valid HCL format by running a simple check
+          echo "Verifying filtered.tfvars format..."
+          terraform fmt -check "$FILTERED_TFVARS" || echo "Warning: Filtered tfvars file may not be valid HCL format, but continuing anyway"
           
           # Run terraform plan with the password provided and ignore warnings
           terraform plan \
@@ -615,23 +660,68 @@ jobs:
             touch "$FILTERED_TFVARS"
             
             # Read each variable from the original tfvars and only keep declared ones
-            while IFS= read -r line; do
-              # Skip comments and empty lines
-              if [[ "$line" =~ ^\s*# || "$line" =~ ^\s*$ ]]; then
-                continue
-              fi
-              
-              VAR_NAME=$(echo "$line" | grep -Po "^\\K[^=]*" | xargs)
-              if [[ -n "$VAR_NAME" ]]; then
-                # Check if this variable is in the declared variables list
-                if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
-                  echo "$line" >> "$FILTERED_TFVARS"
-                  echo "Adding variable: $VAR_NAME"
-                else
+            # Create an empty file
+            > "$FILTERED_TFVARS"
+            
+            # Create a temporary file to track which variables we've already added
+            ADDED_VARS_FILE=$(mktemp)
+            
+            # Add rds_password ahead of time to avoid issues with ordering
+            if ! grep -q "^rds_password\s*=" terraform.tfvars; then
+              echo "rds_password = \"${RDS_PASSWORD}\"" >> "$FILTERED_TFVARS"
+              echo "rds_password" >> "$ADDED_VARS_FILE"
+              echo "Adding variable: rds_password"
+            else
+              echo "rds_password already exists in tfvars, will be processed normally"
+            fi
+            
+            # Debug: show content of terraform.tfvars
+            echo "Contents of original terraform.tfvars file:"
+            cat terraform.tfvars
+            
+            # Extract only simple key-value pairs, handling multi-line blocks more carefully
+            awk -F= '{
+              if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) {
+                # Skip comments and empty lines
+                next
+              } else if ($0 ~ /^[a-zA-Z0-9_-]+[[:space:]]*=/) {
+                # Extract variable name for simple assignments
+                var_name = $1
+                gsub(/[[:space:]]*$/, "", var_name)
+                gsub(/^[[:space:]]*/, "", var_name)
+                print var_name
+              }
+            }' terraform.tfvars > declared_in_tfvars.txt
+            
+            echo "Variables found in tfvars file:"
+            cat declared_in_tfvars.txt
+            
+            # Process only the simple variable assignments
+            while read -r VAR_NAME; do
+              # Check if this variable is in the declared variables list and hasn't been added yet
+              if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$" && ! grep -q "^$VAR_NAME$" "$ADDED_VARS_FILE"; then
+                # Extract the entire line from the original tfvars file
+                grep -E "^$VAR_NAME[[:space:]]*=" terraform.tfvars >> "$FILTERED_TFVARS"
+                echo "$VAR_NAME" >> "$ADDED_VARS_FILE"
+                echo "Adding variable: $VAR_NAME"
+              else
+                if ! echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
                   echo "Skipping undeclared variable: $VAR_NAME"
+                else
+                  echo "Skipping duplicate variable: $VAR_NAME"
                 fi
               fi
-            done < terraform.tfvars
+            done < declared_in_tfvars.txt
+            
+            # Clean up the temporary file
+            rm -f declared_in_tfvars.txt
+            
+            # Clean up
+            rm -f "$ADDED_VARS_FILE"
+            
+            # Show the contents of the filtered tfvars file
+            echo "Contents of filtered tfvars file:"
+            cat "$FILTERED_TFVARS"
           fi
           
           # Run terraform apply with filtered variables and the RDS password
