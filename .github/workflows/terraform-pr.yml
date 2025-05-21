@@ -128,6 +128,7 @@ jobs:
       AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
       TERRAFORM_FAILED: "false"
       CURRENT_STEP: "setup"
+      ERROR_MESSAGE: ""
     permissions:
       contents: write
       pull-requests: write
@@ -175,7 +176,7 @@ jobs:
 
       - name: Validate tfvars file
         id: validate
-        continue-on-error: true
+        continue-on-error: false
         run: |
           # Set the current step name for failure tracking
           echo "CURRENT_STEP=validate_tfvars" >> $GITHUB_ENV
@@ -184,6 +185,9 @@ jobs:
           # Check if tfvars file exists
           if [ ! -f aws/terraform.tfvars ]; then
             echo "Error: terraform.tfvars file not found"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=validate_tfvars" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=terraform.tfvars file not found" >> $GITHUB_ENV
             exit 1
           fi
 
@@ -207,7 +211,7 @@ jobs:
               validation_success="false"
               echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
               echo "FAILED_STEP=validate_tfvars" >> $GITHUB_ENV
-              echo "VALIDATION_FAILURE=Missing required variable: $var" >> $GITHUB_ENV
+              echo "ERROR_MESSAGE=Missing required variable: $var" >> $GITHUB_ENV
               exit 1
             fi
           done
@@ -218,7 +222,7 @@ jobs:
             validation_success="false"
             echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
             echo "FAILED_STEP=validate_tfvars" >> $GITHUB_ENV
-            echo "VALIDATION_FAILURE=Invalid environment value" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=Invalid environment value" >> $GITHUB_ENV
             exit 1
           fi
 
@@ -228,7 +232,7 @@ jobs:
             validation_success="false"
             echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
             echo "FAILED_STEP=validate_tfvars" >> $GITHUB_ENV
-            echo "VALIDATION_FAILURE=Invalid AWS region" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=Invalid AWS region" >> $GITHUB_ENV
             exit 1
           fi
 
@@ -380,13 +384,16 @@ jobs:
       - name: Terraform Init
         id: init
         working-directory: ${{ env.ENV_DIR }}
-        continue-on-error: true
+        continue-on-error: false
         run: |
           # Set the current step name for failure tracking
           echo "CURRENT_STEP=terraform_init" >> $GITHUB_ENV
           # Verify tfvars file exists before init
           if [ ! -f "terraform.tfvars" ]; then
             echo "Error: terraform.tfvars not found in working directory"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_init" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=terraform.tfvars not found in working directory" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -399,6 +406,8 @@ jobs:
             echo "Error: Terraform init failed with exit code $INIT_EXIT_CODE"
             echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
             echo "FAILED_STEP=terraform_init" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=Terraform init failed with exit code $INIT_EXIT_CODE" >> $GITHUB_ENV
+            echo "TERRAFORM_EXIT_CODE=$INIT_EXIT_CODE" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -454,13 +463,16 @@ jobs:
       - name: Terraform Plan
         id: plan
         working-directory: ${{ env.ENV_DIR }}
-        continue-on-error: true
+        continue-on-error: false
         run: |
           # Set the current step name for failure tracking
           echo "CURRENT_STEP=terraform_plan" >> $GITHUB_ENV
           # Verify tfvars file exists before plan
           if [ ! -f "terraform.tfvars" ]; then
             echo "Error: terraform.tfvars not found in working directory"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_plan" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=terraform.tfvars not found in working directory" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -468,6 +480,9 @@ jobs:
           if [ ! -f "variables.tf" ]; then
             echo "Error: variables.tf not found in working directory"
             ls -la
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_plan" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=variables.tf not found in working directory" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -478,9 +493,6 @@ jobs:
           # Display the contents of variables.tf for debugging
           echo "Contents of variables.tf:"
           cat variables.tf
-          
-          # Generate a secure random password for RDS
-          RDS_PASSWORD=$(openssl rand -base64 16)
           
           # Fix problematic variables in tfvars
           # Create a temporary file with variables overrides to handle type errors
@@ -502,6 +514,9 @@ jobs:
           DECLARED_VARS=$(grep -h "^variable" *.tf | grep -o '"[^"]*"' | tr -d '"' | sort -u)
           echo "Declared variables:"
           echo "$DECLARED_VARS"
+          
+          # Generate a secure random password for RDS
+          RDS_PASSWORD=$(openssl rand -base64 16)
           
           # Run terraform plan directly with the original tfvars file
           # We'll only pass the RDS password as an additional variable
@@ -527,12 +542,22 @@ jobs:
             echo "Error: Terraform plan failed with exit code $PLAN_EXIT_CODE"
             echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
             echo "FAILED_STEP=terraform_plan" >> $GITHUB_ENV
+            echo "TERRAFORM_EXIT_CODE=$PLAN_EXIT_CODE" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=Terraform plan failed with exit code $PLAN_EXIT_CODE" >> $GITHUB_ENV
+            # Capture error details from the log if possible
+            ERROR_DETAILS=$(grep -A 5 "Error:" logs/plan.log || echo "See plan logs for details")
+            echo "ERROR_DETAILS<<EOF" >> $GITHUB_ENV
+            echo "$ERROR_DETAILS" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
             exit 1
           fi
           
           # Verify plan output was created
           if [ ! -f "plan.out" ]; then
             echo "Error: terraform plan output file not created"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_plan" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=terraform plan output file not created" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -588,19 +613,25 @@ jobs:
       - name: Terraform Apply
         id: apply
         working-directory: ${{ env.ENV_DIR }}
-        continue-on-error: true
+        continue-on-error: false
         run: |
           # Set the current step name for failure tracking
           echo "CURRENT_STEP=terraform_apply" >> $GITHUB_ENV
           # Verify tfvars file exists before apply
           if [ ! -f "terraform.tfvars" ]; then
             echo "Error: terraform.tfvars not found in working directory"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_apply" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=terraform.tfvars not found in working directory" >> $GITHUB_ENV
             exit 1
           fi
           
           # Verify plan output exists
           if [ ! -f "plan.out" ]; then
             echo "Error: terraform plan output file not found"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_apply" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=terraform plan output file not found" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -641,6 +672,13 @@ jobs:
             echo "Error: Terraform apply failed with exit code $APPLY_EXIT_CODE"
             echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
             echo "FAILED_STEP=terraform_apply" >> $GITHUB_ENV
+            echo "TERRAFORM_EXIT_CODE=$APPLY_EXIT_CODE" >> $GITHUB_ENV
+            echo "ERROR_MESSAGE=Terraform apply failed with exit code $APPLY_EXIT_CODE" >> $GITHUB_ENV
+            # Capture error details from the log if possible
+            ERROR_DETAILS=$(grep -A 5 "Error:" logs/apply.log || echo "See apply logs for details")
+            echo "ERROR_DETAILS<<EOF" >> $GITHUB_ENV
+            echo "$ERROR_DETAILS" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -861,6 +899,13 @@ jobs:
           script: |
             const issueNumber = ${{ needs.create-issue.outputs.issue_number }};
             const failedStep = process.env.FAILED_STEP || process.env.CURRENT_STEP || 'unknown';
+            const errorMessage = process.env.ERROR_MESSAGE || 'Unknown error';
+            const errorDetails = process.env.ERROR_DETAILS || '';
+            const exitCode = process.env.TERRAFORM_EXIT_CODE || '';
+            
+            console.log(`Workflow failed during step: ${failedStep}`);
+            console.log(`Error message: ${errorMessage}`);
+            console.log(`Error details: ${errorDetails}`);
             
             const issue = await github.rest.issues.get({
               owner: context.repo.owner,
@@ -880,8 +925,10 @@ jobs:
             
             const failureDetails = {
               failed_step: failedStep,
+              error_message: errorMessage,
+              error_details: errorDetails,
               validation_failure: process.env.VALIDATION_FAILURE || null,
-              exit_code: process.env.TERRAFORM_EXIT_CODE || null,
+              exit_code: exitCode,
               failure_timestamp: new Date().toISOString()
             };
             
@@ -910,18 +957,29 @@ jobs:
               labels: ['environment', 'status:failed']
             });
             
-            // Add failure comment with more details
-            const validationFailure = process.env.VALIDATION_FAILURE || '';
-            const exitCode = process.env.TERRAFORM_EXIT_CODE || '';
-            const errorDetails = validationFailure 
-              ? `\n\nValidation error: ${validationFailure}` 
-              : exitCode 
-                ? `\n\nExit code: ${exitCode}` 
-                : '';
+            // Add failure comment with detailed error information
+            let errorInfoMessage = `Failed during step: **${failedStep}**\n\n`;
+            
+            if (errorMessage && errorMessage !== 'Unknown error') {
+              errorInfoMessage += `**Error:** ${errorMessage}\n\n`;
+            }
+            
+            if (errorDetails) {
+              errorInfoMessage += `**Details:**\n\`\`\`\n${errorDetails}\n\`\`\`\n\n`;
+            }
+            
+            if (exitCode) {
+              errorInfoMessage += `**Exit code:** ${exitCode}\n\n`;
+            }
+            
+            errorInfoMessage += `Please check the GitHub Actions logs for more details: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
                 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
-              body: `## Environment Creation Failed ❌\n\nFailed during step: ${failedStep}${errorDetails}\n\nPlease check the GitHub Actions logs for more details: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+              body: `## Environment Creation Failed ❌\n\n${errorInfoMessage}`
             });
+            
+            // Ensure the job fails
+            core.setFailed(`Terraform workflow failed during ${failedStep}: ${errorMessage}`);
