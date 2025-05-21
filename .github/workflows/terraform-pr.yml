@@ -482,9 +482,33 @@ jobs:
           # Generate a secure random password for RDS
           RDS_PASSWORD=$(openssl rand -base64 16)
           
+          # Fix problematic variables in tfvars
+          # Create a temporary file with variables overrides to handle type errors
+          echo "Creating variable overrides for problematic entries..."
+          OVERRIDE_FILE="variables_override.auto.tfvars"
+          
+          # Check if duration is empty in terraform.tfvars and provide a default numeric value if it is
+          if grep -q 'duration[[:space:]]*=[[:space:]]*""' terraform.tfvars; then
+            echo "Fixing empty duration variable by setting a default value"
+            echo 'duration = 7' > "$OVERRIDE_FILE"
+          fi
+          
+          # Check for other known problematic variables and add sensible defaults
+          echo "# Auto-generated variable overrides" >> "$OVERRIDE_FILE"
+          echo "# These override problematic values in terraform.tfvars" >> "$OVERRIDE_FILE"
+          
+          # List the variable declarations to identify declared variables
+          echo "Checking for variable declarations in *.tf files..."
+          DECLARED_VARS=$(grep -h "^variable" *.tf | grep -o '"[^"]*"' | tr -d '"' | sort -u)
+          echo "Declared variables:"
+          echo "$DECLARED_VARS"
+          
           # Run terraform plan directly with the original tfvars file
           # We'll only pass the RDS password as an additional variable
-          echo "Using original terraform.tfvars file directly"
+          echo "Using original terraform.tfvars file directly with overrides for problematic values"
+          
+          # Set TF_CLI_ARGS to silence warnings about undeclared variables
+          export TF_CLI_ARGS="-compact-warnings"
           
           terraform plan \
             -var-file="./terraform.tfvars" \
@@ -492,7 +516,6 @@ jobs:
             -out="plan.out" \
             -parallelism=10 \
             -refresh=true \
-            -compact-warnings \
             | tee logs/plan.log
             
           # Save the password securely for apply step
@@ -581,6 +604,23 @@ jobs:
             exit 1
           fi
           
+          # Use our variables_override.auto.tfvars if it exists
+          if [ -f "variables_override.auto.tfvars" ]; then
+            echo "Using variables_override.auto.tfvars to fix problematic entries:"
+            cat variables_override.auto.tfvars
+          fi
+          
+          # Fix the duration variable if it's empty
+          if grep -q 'duration[[:space:]]*=[[:space:]]*""' terraform.tfvars; then
+            echo "Applying with duration=7 to override empty string value"
+            DURATION_VAR="-var=duration=7"
+          else
+            DURATION_VAR=""
+          fi
+          
+          # Set TF_CLI_ARGS to silence warnings about undeclared variables
+          export TF_CLI_ARGS="-compact-warnings"
+          
           # Run terraform apply directly with the original tfvars file
           echo "Using original terraform.tfvars file directly"
           
@@ -589,7 +629,7 @@ jobs:
             -auto-approve \
             -var-file="./terraform.tfvars" \
             -var="rds_password=${RDS_PASSWORD}" \
-            -compact-warnings \
+            $DURATION_VAR \
             | tee logs/apply.log
             
           # Store the RDS password in a secure file for later reference
