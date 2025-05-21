@@ -123,13 +123,15 @@ jobs:
     name: Validate and Deploy Environment
     needs: create-issue
     runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: true
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+      TERRAFORM_FAILED: "false"
+      CURRENT_STEP: "setup"
     permissions:
       contents: write
       pull-requests: write
       issues: write
-    env:
-      TF_IN_AUTOMATION: true
-      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -173,7 +175,12 @@ jobs:
 
       - name: Validate tfvars file
         id: validate
+        continue-on-error: true
         run: |
+          # Set the current step name for failure tracking
+          echo "CURRENT_STEP=validate_tfvars" >> $GITHUB_ENV
+          # Initialize failure tracking
+          echo "::save-state name=STEP_FAILED::false"
           # Check if tfvars file exists
           if [ ! -f aws/terraform.tfvars ]; then
             echo "Error: terraform.tfvars file not found"
@@ -193,9 +200,14 @@ jobs:
             "enable_elasticache"
           )
 
+          validation_success="true"
           for var in "${required_vars[@]}"; do
             if ! grep -q "^$var" aws/terraform.tfvars; then
               echo "Error: Required variable '$var' not found in terraform.tfvars"
+              validation_success="false"
+              echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+              echo "FAILED_STEP=validate_tfvars" >> $GITHUB_ENV
+              echo "VALIDATION_FAILURE=Missing required variable: $var" >> $GITHUB_ENV
               exit 1
             fi
           done
@@ -203,12 +215,20 @@ jobs:
           # Validate environment value
           if ! grep -qP 'environment\s*=\s*"(dev|staging|prod)"' aws/terraform.tfvars; then
             echo "Error: Invalid environment value in terraform.tfvars"
+            validation_success="false"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=validate_tfvars" >> $GITHUB_ENV
+            echo "VALIDATION_FAILURE=Invalid environment value" >> $GITHUB_ENV
             exit 1
           fi
 
           # Validate AWS region
           if ! grep -qP 'aws_region\s*=\s*"(us-east-1|us-west-2|eu-west-1|eu-west-2|ap-southeast-1)"' aws/terraform.tfvars; then
             echo "Error: Invalid AWS region in terraform.tfvars"
+            validation_success="false"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=validate_tfvars" >> $GITHUB_ENV
+            echo "VALIDATION_FAILURE=Invalid AWS region" >> $GITHUB_ENV
             exit 1
           fi
 
@@ -360,8 +380,10 @@ jobs:
       - name: Terraform Init
         id: init
         working-directory: ${{ env.ENV_DIR }}
-        continue-on-error: false
+        continue-on-error: true
         run: |
+          # Set the current step name for failure tracking
+          echo "CURRENT_STEP=terraform_init" >> $GITHUB_ENV
           # Verify tfvars file exists before init
           if [ ! -f "terraform.tfvars" ]; then
             echo "Error: terraform.tfvars not found in working directory"
@@ -372,8 +394,11 @@ jobs:
           terraform init -upgrade -reconfigure | tee logs/init.log
           
           # Check init status
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Error: Terraform init failed"
+          INIT_EXIT_CODE=${PIPESTATUS[0]}
+          if [ $INIT_EXIT_CODE -ne 0 ]; then
+            echo "Error: Terraform init failed with exit code $INIT_EXIT_CODE"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_init" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -429,8 +454,10 @@ jobs:
       - name: Terraform Plan
         id: plan
         working-directory: ${{ env.ENV_DIR }}
-        continue-on-error: false
+        continue-on-error: true
         run: |
+          # Set the current step name for failure tracking
+          echo "CURRENT_STEP=terraform_plan" >> $GITHUB_ENV
           # Verify tfvars file exists before plan
           if [ ! -f "terraform.tfvars" ]; then
             echo "Error: terraform.tfvars not found in working directory"
@@ -452,104 +479,15 @@ jobs:
           echo "Contents of variables.tf:"
           cat variables.tf
           
-          # Run terraform plan with auto-generated password for RDS
           # Generate a secure random password for RDS
           RDS_PASSWORD=$(openssl rand -base64 16)
           
-          # Extract only the variables that are actually declared in variables.tf
-          echo "Extracting declared variables from variables.tf..."
-          # Try multiple patterns to find variable declarations
-          PATTERN1=$(grep -Po "^variable\s+\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
-          PATTERN2=$(grep -Po "^variable\s+\\K[^ {]*" *.tf 2>/dev/null || echo "")
-          PATTERN3=$(grep -Po "^variable\s*{\\s*name\\s*=\\s*\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
+          # Run terraform plan directly with the original tfvars file
+          # We'll only pass the RDS password as an additional variable
+          echo "Using original terraform.tfvars file directly"
           
-          # Combine all patterns
-          DECLARED_VARS=$(echo "$PATTERN1 $PATTERN2 $PATTERN3" | tr ' ' '\n' | sort -u | grep -v '^$')
-          echo "Declared variables:"
-          echo "$DECLARED_VARS"
-          
-          # Always include these critical variables
-          REQUIRED_VARS="environment aws_region project_name org_name squad_name rds_password"
-          echo "Adding required variables: $REQUIRED_VARS"
-          DECLARED_VARS=$(echo -e "$DECLARED_VARS\n$REQUIRED_VARS" | tr ' ' '\n' | sort -u | grep -v '^$')
-          
-          # Create a filtered tfvars file with only declared variables
-          echo "Creating filtered tfvars file..."
-          FILTERED_TFVARS="filtered.tfvars"
-          touch "$FILTERED_TFVARS"
-          
-          # Read each variable from the original tfvars and only keep declared ones
-          echo "Filtering terraform.tfvars to create $FILTERED_TFVARS"
-          # Create an empty file
-          > "$FILTERED_TFVARS"
-          
-          # Create a temporary file to track which variables we've already added
-          ADDED_VARS_FILE=$(mktemp)
-          
-          # Add rds_password ahead of time to avoid issues with ordering
-          if ! grep -q "^rds_password\s*=" terraform.tfvars; then
-            echo "rds_password = \"${RDS_PASSWORD}\"" >> "$FILTERED_TFVARS"
-            echo "rds_password" >> "$ADDED_VARS_FILE"
-            echo "Adding variable: rds_password"
-          else
-            echo "rds_password already exists in tfvars, will be processed normally"
-          fi
-          
-          # Debug: show content of terraform.tfvars
-          echo "Contents of original terraform.tfvars file:"
-          cat terraform.tfvars
-          
-          # Extract only simple key-value pairs, handling multi-line blocks more carefully
-          awk -F= '{
-            if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) {
-              # Skip comments and empty lines
-              next
-            } else if ($0 ~ /^[a-zA-Z0-9_-]+[[:space:]]*=/) {
-              # Extract variable name for simple assignments
-              var_name = $1
-              gsub(/[[:space:]]*$/, "", var_name)
-              gsub(/^[[:space:]]*/, "", var_name)
-              print var_name
-            }
-          }' terraform.tfvars > declared_in_tfvars.txt
-          
-          echo "Variables found in tfvars file:"
-          cat declared_in_tfvars.txt
-          
-          # Process only the simple variable assignments
-          while read -r VAR_NAME; do
-            # Check if this variable is in the declared variables list and hasn't been added yet
-            if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$" && ! grep -q "^$VAR_NAME$" "$ADDED_VARS_FILE"; then
-              # Extract the entire line from the original tfvars file
-              grep -E "^$VAR_NAME[[:space:]]*=" terraform.tfvars >> "$FILTERED_TFVARS"
-              echo "$VAR_NAME" >> "$ADDED_VARS_FILE"
-              echo "Adding variable: $VAR_NAME"
-            else
-              if ! echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
-                echo "Skipping undeclared variable: $VAR_NAME"
-              else
-                echo "Skipping duplicate variable: $VAR_NAME"
-              fi
-            fi
-          done < declared_in_tfvars.txt
-          
-          # Clean up the temporary file
-          rm -f declared_in_tfvars.txt
-          
-          # Clean up
-          rm -f "$ADDED_VARS_FILE"
-          
-          # Display the filtered variables file for debugging
-          echo "Contents of filtered.tfvars:"
-          cat "$FILTERED_TFVARS"
-          
-          # Verify the file is valid HCL format by running a simple check
-          echo "Verifying filtered.tfvars format..."
-          terraform fmt -check "$FILTERED_TFVARS" || echo "Warning: Filtered tfvars file may not be valid HCL format, but continuing anyway"
-          
-          # Run terraform plan with the password provided and ignore warnings
           terraform plan \
-            -var-file="./$FILTERED_TFVARS" \
+            -var-file="./terraform.tfvars" \
             -var="rds_password=${RDS_PASSWORD}" \
             -out="plan.out" \
             -parallelism=10 \
@@ -561,8 +499,11 @@ jobs:
           echo "RDS_PASSWORD=${RDS_PASSWORD}" >> "$GITHUB_ENV"
           
           # Check plan status
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Error: Terraform plan failed"
+          PLAN_EXIT_CODE=${PIPESTATUS[0]}
+          if [ $PLAN_EXIT_CODE -ne 0 ]; then
+            echo "Error: Terraform plan failed with exit code $PLAN_EXIT_CODE"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_plan" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -624,8 +565,10 @@ jobs:
       - name: Terraform Apply
         id: apply
         working-directory: ${{ env.ENV_DIR }}
-        continue-on-error: false
+        continue-on-error: true
         run: |
+          # Set the current step name for failure tracking
+          echo "CURRENT_STEP=terraform_apply" >> $GITHUB_ENV
           # Verify tfvars file exists before apply
           if [ ! -f "terraform.tfvars" ]; then
             echo "Error: terraform.tfvars not found in working directory"
@@ -638,96 +581,13 @@ jobs:
             exit 1
           fi
           
-          # Run terraform apply
-          # Instead of using plan.out which might be incomplete, we'll run apply directly
-          # with the filtered variables to ensure consistency
-          if [ ! -f "$FILTERED_TFVARS" ]; then
-            echo "Error: Filtered tfvars file not found. Creating it again..."
-            # Re-create the filtered tfvars file if needed
-            # Try multiple patterns to find variable declarations
-            PATTERN1=$(grep -Po "^variable\s+\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
-            PATTERN2=$(grep -Po "^variable\s+\\K[^ {]*" *.tf 2>/dev/null || echo "")
-            PATTERN3=$(grep -Po "^variable\s*{\\s*name\\s*=\\s*\"\\K[^\"]*" *.tf 2>/dev/null || echo "")
-            
-            # Combine all patterns
-            DECLARED_VARS=$(echo "$PATTERN1 $PATTERN2 $PATTERN3" | tr ' ' '\n' | sort -u | grep -v '^$')
-            
-            # Always include these critical variables
-            REQUIRED_VARS="environment aws_region project_name org_name squad_name rds_password"
-            DECLARED_VARS=$(echo -e "$DECLARED_VARS\n$REQUIRED_VARS" | tr ' ' '\n' | sort -u | grep -v '^$')
-            
-            FILTERED_TFVARS="filtered.tfvars"
-            touch "$FILTERED_TFVARS"
-            
-            # Read each variable from the original tfvars and only keep declared ones
-            # Create an empty file
-            > "$FILTERED_TFVARS"
-            
-            # Create a temporary file to track which variables we've already added
-            ADDED_VARS_FILE=$(mktemp)
-            
-            # Add rds_password ahead of time to avoid issues with ordering
-            if ! grep -q "^rds_password\s*=" terraform.tfvars; then
-              echo "rds_password = \"${RDS_PASSWORD}\"" >> "$FILTERED_TFVARS"
-              echo "rds_password" >> "$ADDED_VARS_FILE"
-              echo "Adding variable: rds_password"
-            else
-              echo "rds_password already exists in tfvars, will be processed normally"
-            fi
-            
-            # Debug: show content of terraform.tfvars
-            echo "Contents of original terraform.tfvars file:"
-            cat terraform.tfvars
-            
-            # Extract only simple key-value pairs, handling multi-line blocks more carefully
-            awk -F= '{
-              if ($0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/) {
-                # Skip comments and empty lines
-                next
-              } else if ($0 ~ /^[a-zA-Z0-9_-]+[[:space:]]*=/) {
-                # Extract variable name for simple assignments
-                var_name = $1
-                gsub(/[[:space:]]*$/, "", var_name)
-                gsub(/^[[:space:]]*/, "", var_name)
-                print var_name
-              }
-            }' terraform.tfvars > declared_in_tfvars.txt
-            
-            echo "Variables found in tfvars file:"
-            cat declared_in_tfvars.txt
-            
-            # Process only the simple variable assignments
-            while read -r VAR_NAME; do
-              # Check if this variable is in the declared variables list and hasn't been added yet
-              if echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$" && ! grep -q "^$VAR_NAME$" "$ADDED_VARS_FILE"; then
-                # Extract the entire line from the original tfvars file
-                grep -E "^$VAR_NAME[[:space:]]*=" terraform.tfvars >> "$FILTERED_TFVARS"
-                echo "$VAR_NAME" >> "$ADDED_VARS_FILE"
-                echo "Adding variable: $VAR_NAME"
-              else
-                if ! echo "$DECLARED_VARS" | grep -q "^$VAR_NAME$"; then
-                  echo "Skipping undeclared variable: $VAR_NAME"
-                else
-                  echo "Skipping duplicate variable: $VAR_NAME"
-                fi
-              fi
-            done < declared_in_tfvars.txt
-            
-            # Clean up the temporary file
-            rm -f declared_in_tfvars.txt
-            
-            # Clean up
-            rm -f "$ADDED_VARS_FILE"
-            
-            # Show the contents of the filtered tfvars file
-            echo "Contents of filtered tfvars file:"
-            cat "$FILTERED_TFVARS"
-          fi
+          # Run terraform apply directly with the original tfvars file
+          echo "Using original terraform.tfvars file directly"
           
-          # Run terraform apply with filtered variables and the RDS password
+          # Run terraform apply with the original tfvars file and RDS password
           terraform apply \
             -auto-approve \
-            -var-file="./$FILTERED_TFVARS" \
+            -var-file="./terraform.tfvars" \
             -var="rds_password=${RDS_PASSWORD}" \
             -compact-warnings \
             | tee logs/apply.log
@@ -736,8 +596,11 @@ jobs:
           echo "RDS Password: ${RDS_PASSWORD}" > logs/rds_credentials.txt
           
           # Check apply status
-          if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "Error: Terraform apply failed"
+          APPLY_EXIT_CODE=${PIPESTATUS[0]}
+          if [ $APPLY_EXIT_CODE -ne 0 ]; then
+            echo "Error: Terraform apply failed with exit code $APPLY_EXIT_CODE"
+            echo "TERRAFORM_FAILED=true" >> $GITHUB_ENV
+            echo "FAILED_STEP=terraform_apply" >> $GITHUB_ENV
             exit 1
           fi
           
@@ -901,7 +764,7 @@ jobs:
             }
 
       - name: Update Issue Status - Complete
-        if: success()
+        if: success() && env.TERRAFORM_FAILED != 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -951,13 +814,13 @@ jobs:
             });
 
       - name: Update Issue Status - Failed
-        if: failure()
+        if: failure() || env.TERRAFORM_FAILED == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const issueNumber = ${{ needs.create-issue.outputs.issue_number }};
-            const failedStep = process.env.FAILED_STEP || 'unknown';
+            const failedStep = process.env.FAILED_STEP || process.env.CURRENT_STEP || 'unknown';
             
             const issue = await github.rest.issues.get({
               owner: context.repo.owner,
@@ -975,12 +838,20 @@ jobs:
               console.error('Error parsing JSON metadata:', parseError);
             }
             
+            const failureDetails = {
+              failed_step: failedStep,
+              validation_failure: process.env.VALIDATION_FAILURE || null,
+              exit_code: process.env.TERRAFORM_EXIT_CODE || null,
+              failure_timestamp: new Date().toISOString()
+            };
+            
             const updatedMetadata = {
               environment: {
                 ...currentMetadata.environment,
                 status: 'failed',
                 failed_at: new Date().toISOString(),
-                failed_step: failedStep
+                failed_step: failedStep,
+                failure_details: failureDetails
               }
             };
             
@@ -999,10 +870,18 @@ jobs:
               labels: ['environment', 'status:failed']
             });
             
-            // Add failure comment
+            // Add failure comment with more details
+            const validationFailure = process.env.VALIDATION_FAILURE || '';
+            const exitCode = process.env.TERRAFORM_EXIT_CODE || '';
+            const errorDetails = validationFailure 
+              ? `\n\nValidation error: ${validationFailure}` 
+              : exitCode 
+                ? `\n\nExit code: ${exitCode}` 
+                : '';
+                
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issueNumber,
-              body: `## Environment Creation Failed ❌\n\nFailed during step: ${failedStep}\n\nPlease check the logs for more details.`
+              body: `## Environment Creation Failed ❌\n\nFailed during step: ${failedStep}${errorDetails}\n\nPlease check the GitHub Actions logs for more details: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
